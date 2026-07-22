@@ -13,10 +13,18 @@ permissions:
   pull-requests: write
   issues: write
 
+# One review per PR at a time; superseded reviews of an outdated diff are
+# worthless, so cancel them. Keyed on the PR number — for pull_request_target
+# github.ref is the base branch, which would collide across PRs.
+concurrency:
+  group: zai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     name: Review PR with GLM 5.2
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.event.pull_request.draft == false }}
     env:
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
