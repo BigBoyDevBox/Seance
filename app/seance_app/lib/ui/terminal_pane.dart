@@ -379,6 +379,20 @@ class _SessionView extends StatefulWidget {
 }
 
 class _SessionViewState extends State<_SessionView> {
+  /// Zoom keys. `equal` covers the unshifted key that carries "+" on most
+  /// layouts, and the numpad variants cover the keypad, so ⌘+ works whether or
+  /// not the user reaches for Shift. `static final`, not `const`:
+  /// LogicalKeyboardKey overrides `==`, which a const set may not contain.
+  static final Set<LogicalKeyboardKey> _zoomInKeys = {
+    LogicalKeyboardKey.equal,
+    LogicalKeyboardKey.add,
+    LogicalKeyboardKey.numpadAdd,
+  };
+  static final Set<LogicalKeyboardKey> _zoomOutKeys = {
+    LogicalKeyboardKey.minus,
+    LogicalKeyboardKey.numpadSubtract,
+  };
+
   final FocusNode _focus = FocusNode();
   // Our own controller so the copy/paste menu can read (and set) the selection.
   final TerminalController _terminalController = TerminalController();
@@ -519,23 +533,12 @@ class _SessionViewState extends State<_SessionView> {
       terminalSelectAll(widget.tab);
       return KeyEventResult.handled;
     }
-    // Zoom. `equal` covers the unshifted key that carries "+" on most layouts,
-    // and `add`/`minus`/`numpadAdd` cover the numeric keypad, so ⌘+ works
-    // whether or not the user reaches for Shift.
-    final zoomIn = {
-      LogicalKeyboardKey.equal,
-      LogicalKeyboardKey.add,
-      LogicalKeyboardKey.numpadAdd,
-    };
-    final zoomOut = {
-      LogicalKeyboardKey.minus,
-      LogicalKeyboardKey.numpadSubtract,
-    };
-    if (clip && zoomIn.contains(event.logicalKey)) {
+    // Zoom (see _zoomInKeys).
+    if (clip && _zoomInKeys.contains(event.logicalKey)) {
       widget.state.zoomTerminal(kTerminalFontSizeStep);
       return KeyEventResult.handled;
     }
-    if (clip && zoomOut.contains(event.logicalKey)) {
+    if (clip && _zoomOutKeys.contains(event.logicalKey)) {
       widget.state.zoomTerminal(-kTerminalFontSizeStep);
       return KeyEventResult.handled;
     }
