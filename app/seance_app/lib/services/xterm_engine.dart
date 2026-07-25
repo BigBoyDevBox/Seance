@@ -353,13 +353,14 @@ class XtermTerminalEngine implements TerminalEngine {
   String recentText({int maxLines = 200}) {
     final buffer = terminal.buffer;
     final height = buffer.height;
-    if (height <= 0 || maxLines <= 0) return '';
+    final viewWidth = terminal.viewWidth;
+    if (height <= 0 || maxLines <= 0 || viewWidth <= 0) return '';
     final start = height > maxLines ? height - maxLines : 0;
     return buffer
         .getText(
           BufferRangeLine(
             CellOffset(0, start),
-            CellOffset(terminal.viewWidth - 1, height - 1),
+            CellOffset(viewWidth - 1, height - 1),
           ),
         )
         .trimRight();
