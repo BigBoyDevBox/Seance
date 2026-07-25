@@ -88,13 +88,22 @@ class TerminalSession {
 
   void _syncMetadata() {
     metadata.value = SessionMetadata(
-      // Keep the last known values: a shell that stops emitting OSC 7 should
-      // not blank the tab back to "Session N" mid-session.
-      workingDirectory:
-          engine.workingDirectory.value ?? metadata.value.workingDirectory,
-      terminalTitle: engine.terminalTitle.value ?? metadata.value.terminalTitle,
+      // Keep the last known values: a shell that stops reporting — or clears
+      // its title with an empty OSC 2, which is a common way to reset it —
+      // should not blank the tab back to "Session N" mid-session.
+      workingDirectory: _keepLast(
+        engine.workingDirectory.value,
+        metadata.value.workingDirectory,
+      ),
+      terminalTitle: _keepLast(
+        engine.terminalTitle.value,
+        metadata.value.terminalTitle,
+      ),
     );
   }
+
+  static String? _keepLast(String? reported, String? previous) =>
+      (reported == null || reported.isEmpty) ? previous : reported;
 
   bool get isConnected => session != null && !session!.isClosed;
 

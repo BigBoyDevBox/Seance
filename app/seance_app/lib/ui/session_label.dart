@@ -14,8 +14,8 @@ const String _ellipsis = '…';
 
 /// C0/C1 control characters, plus the invisible formatting characters a
 /// hostile title could use to reorder or hide text: the zero-width space, the
-/// left/right-to-left marks, the line and paragraph separators, the bidi
-/// overrides and isolates, and the byte-order mark.
+/// left-to-right and right-to-left marks (LRM/RLM), the line and paragraph
+/// separators, the bidi overrides and isolates, and the byte-order mark.
 ///
 /// Deliberately keeps U+200C/U+200D (the zero-width non-joiner and joiner):
 /// they cannot reorder or conceal anything on their own, and dropping them
