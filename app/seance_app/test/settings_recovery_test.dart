@@ -116,6 +116,27 @@ void main() {
       expect(settings.syncUsername, 'say "hi"');
     });
 
+    test('a lookalike inside another string value is not picked up', () {
+      // The name only counts where a key can appear: at the start, or after a
+      // `{` or `,`. In the middle of someone else's string it is just text.
+      final settings = salvageSettings(
+        r'{"note":"do not touch \"deviceId\":\"decoy\" here","x":1,',
+      );
+      expect(settings.deviceId, isEmpty);
+    });
+
+    test('a key immediately after a brace or comma still matches', () {
+      expect(salvageSettings('{"deviceId":"first",').deviceId, 'first');
+      expect(
+        salvageSettings('{"autoSync":true,"deviceId":"later", trunc').deviceId,
+        'later',
+      );
+      expect(
+        salvageSettings('{ \n  "deviceId" : "spaced" , trunc').deviceId,
+        'spaced',
+      );
+    });
+
     test('a nested key of the same name is a documented limitation', () {
       // Corrupt input cannot be parsed, so the scan is textual and cannot tell
       // nesting apart. Pinned so the behaviour is a decision, not a surprise.

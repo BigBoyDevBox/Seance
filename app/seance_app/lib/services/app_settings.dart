@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:seance_core/seance_core.dart';
 
 import 'atomic_file.dart';
@@ -195,13 +196,15 @@ class AppSettings {
 AppSettings salvageSettings(String? raw) {
   final settings = AppSettings();
   if (raw == null) return settings;
-  /// Sound only for a top-level key. A corrupt document cannot be parsed, so
-  /// this scans the raw text and would equally match the same key nested
-  /// inside another object — none of the three salvaged names is used as a
-  /// nested key today, and a wrong salvage is still bounded by being a string.
+  /// Best effort on a document that cannot be parsed. The key must sit where a
+  /// key can sit — at the start, or after a `{` or `,` — which keeps the name
+  /// from being picked up out of the middle of some other string's contents.
+  /// It still cannot tell nesting apart (a `{"editors":{"deviceId":…}}` looks
+  /// identical to the real thing), and a wrong salvage stays bounded by being
+  /// a string that goes back through the normal accessors.
   String? field(String name) {
     final match = RegExp(
-      '"$name"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"',
+      '(?:^|[,{])\\s*"$name"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"',
     ).firstMatch(raw);
     final value = match?.group(1);
     if (value == null) return null;
@@ -303,10 +306,13 @@ class SettingsStore {
         // fall back to defaults, and mint the fresh deviceId this is here to
         // avoid.
         await save(salvaged);
-      } catch (_) {
+      } catch (error) {
         // Recovering is best effort. A read-only or full disk must not turn an
         // unreadable settings file into a failed launch — the app runs on the
-        // salvaged values and tries again next time.
+        // salvaged values and tries again next time. Logged rather than
+        // swallowed outright: if it keeps failing, the recovery notice will
+        // reappear every launch and this says why.
+        debugPrint('Settings recovery could not be written back: $error');
       }
       return salvaged;
     }
