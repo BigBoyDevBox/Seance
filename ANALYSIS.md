@@ -1,45 +1,53 @@
 # Seance Engineering And Product Analysis
 
-Last consolidated: 2026-07-09
+Last consolidated: 2026-07-25
 
-Review base: `origin/main` at `a673d70`
+Review base: `origin/main` at `10edf74`
 
-This is the durable backlog produced by a full review of the protocol,
-cryptography, SSH/core package, sync client, sync server, Flutter application,
-platform configuration, tests, release/deployment tooling, performance,
-accessibility, visual design, and product experience.
+The durable backlog for Séance. It consolidates two full review passes:
 
-The temporary review document `sol.md` was intentionally not added to `main`.
-Its completed items are recorded in the PR ledger below, and every incomplete or
-partially complete item is retained here with enough context to resume work.
+- **2026-07-09** — protocol, cryptography, SSH/core, sync client and server,
+  Flutter application, platform configuration, tests, release tooling,
+  performance, accessibility, visual design, and product experience. Its
+  findings are numbered `SOL-nnn`.
+- **2026-07-25** — a second, independent pass over the whole repository after
+  PRs #1–#31 landed, focused on bugs, performance, interface and layout,
+  missing features, and product ideas. Its findings are numbered `SEA-nnn`.
+
+Both temporary review documents (`sol.md`, `claude.md`) were deliberately kept
+out of `main`; everything in them lives here. Completed work is recorded in the
+pull-request ledger and in [Resolved And Retired](#resolved-and-retired) rather
+than deleted, so no context is lost.
 
 ## Baseline Verification
 
-The reviewed `main` baseline was verified with:
-
 ```bash
 dart analyze packages/seance_protocol packages/seance_core packages/seance_sync_server
-LD_LIBRARY_PATH=/tmp/seance-sol-lib \
-  dart test packages/seance_protocol packages/seance_core packages/seance_sync_server
+dart test    packages/seance_protocol packages/seance_core packages/seance_sync_server
 
 cd app/seance_app
 flutter analyze
 flutter test
 ```
 
-Results at review time:
+Results at the 2026-07-25 pass (Dart 3.12.2, Flutter 3.44.8):
 
-- Pure-Dart analysis: clean.
-- Pure-Dart tests: 106 passed. The local container exposes only
-  `libsqlite3.so.0`, so a temporary external `libsqlite3.so` symlink was needed.
-- Flutter analysis: clean.
-- Flutter tests: 20 passed.
+| Check | 2026-07-09 | 2026-07-25 |
+|---|---|---|
+| Pure-Dart analysis | clean | clean |
+| Pure-Dart tests | 106 passed | **187 passed** |
+| Flutter analysis | clean | clean |
+| Flutter tests | 20 passed | **136 passed** |
+
+`libsqlite3` no longer needs a manual symlink on this container.
 
 The project has strong foundations: clear packages and interfaces, shared wire
 models, strict TOFU behavior, sensible cryptographic primitives, an explicit
 review-before-run assistant invariant, and meaningful regression tests for
-terminal resize and trace storms. The highest risks are in synchronization
+terminal resize and trace storms. The highest risks remain in synchronization
 semantics and durable credential ownership rather than the primitive choices.
+The second pass found no new defects in the protocol or the server; the weakest
+area is now terminal presentation and navigation ergonomics.
 
 ## Priority Legend
 
@@ -52,58 +60,60 @@ semantics and durable credential ownership rather than the primitive choices.
 
 ## Pull Request Ledger
 
-### Merged Before This Review Pass
+### Merged (#1–#31)
 
-| PR | Change | Residual work |
+Every pull request from the first review pass has landed. Residual work found
+while reviewing each one is kept here, because the corresponding `SOL-` entries
+below describe *only* what remains.
+
+| PR | Merged change | Residual finding |
 |---|---|---|
-| [#1](https://github.com/L-K-M/Seance/pull/1) | Reject CR/LF in generated commands and snippets | Central safe staging is still needed; see SOL-047 |
-| [#2](https://github.com/L-K-M/Seance/pull/2) | Bind chat paste tools to the originating session | Chat state is still global rather than per-session |
-| [#3](https://github.com/L-K-M/Seance/pull/3) | Redact common modern token formats | Redaction remains best-effort; inspector still absent |
+| [#1](https://github.com/L-K-M/Seance/pull/1) | Reject CR/LF in generated commands and snippets | Central safe staging still needed — SOL-047 |
+| [#2](https://github.com/L-K-M/Seance/pull/2) | Bind chat paste tools to the originating session | Chat state was global rather than per-session; hoisted to `AppState` in #37, still not per-session |
+| [#3](https://github.com/L-K-M/Seance/pull/3) | Redact common modern token formats | Redaction remains best-effort; inspector absent — SOL-045 |
 | [#4](https://github.com/L-K-M/Seance/pull/4) | Bind Compose HTTP port to loopback | App transport policy and reverse-proxy examples remain |
-| [#5](https://github.com/L-K-M/Seance/pull/5) | Return generic server errors | Server-side structured logging remains absent |
+| [#5](https://github.com/L-K-M/Seance/pull/5) | Return generic server errors | Server-side structured logging remains absent — SOL-055 |
+| [#6](https://github.com/L-K-M/Seance/pull/6) | Atomic JSON writes and corruption recovery | All writers share one `.tmp` path; transient I/O treated as corruption — SOL-034. `SettingsStore` was missed entirely; fixed in #38 |
+| [#7](https://github.com/L-K-M/Seance/pull/7) | Credential edit guard, port validation, supported default auth | Auth transitions can retain a wrong old secret — SOL-029 |
+| [#8](https://github.com/L-K-M/Seance/pull/8) | HTTP/LLM/search timeouts | `Future.timeout` does not cancel the request — SOL-058 |
+| [#9](https://github.com/L-K-M/Seance/pull/9) | Expanded danger-linter patterns | Quoted paths, long options, redirection still evade rules |
+| [#10](https://github.com/L-K-M/Seance/pull/10) | Honor redaction toggle and lint chat commands | Outbound inspector remains absent — SOL-044 |
+| [#11](https://github.com/L-K-M/Seance/pull/11) | Body, batch, and blob limits | No account quotas or pull pagination — SOL-049 |
+| [#12](https://github.com/L-K-M/Seance/pull/12) | Reconnect controller binding; scrollback-wide select-all | Superseded by #27's session-keyed views |
+| [#13](https://github.com/L-K-M/Seance/pull/13) | Reject KDF downgrades | Unbounded memory/iterations still allow client DoS — SOL-014 |
+| [#14](https://github.com/L-K-M/Seance/pull/14) | Pause probes in the background | Probes still ran against connected hosts, unbounded — fixed in #36 |
+| [#15](https://github.com/L-K-M/Seance/pull/15) | Snippet filtering; dialog controller lifecycle | The server list had no equivalent filter — fixed in #34 |
+| [#16](https://github.com/L-K-M/Seance/pull/16) | Stably signed Android APK | Provides continuity, not publisher authenticity |
+| [#17](https://github.com/L-K-M/Seance/pull/17) | Sync cursor advances only through observed pulls | Atomic server pull snapshots and local CAS remain — SOL-002, SOL-005 |
+| [#18](https://github.com/L-K-M/Seance/pull/18) | Parse private keys before opening a socket | Handshake/auth deadlines remain — SOL-020 |
+| [#19](https://github.com/L-K-M/Seance/pull/19) | Prune expired login-limiter buckets | Source-IP policy and spray defence remain — SOL-050 |
+| [#20](https://github.com/L-K-M/Seance/pull/20) | Preserve UTF-8 across SSH packets | Output batching/backpressure remains — SOL-026 |
+| [#21](https://github.com/L-K-M/Seance/pull/21) | Canonical 32-byte recovery codes | Recovery-key enrollment UI remains |
+| [#22](https://github.com/L-K-M/Seance/pull/22) | Bounded chat tool loops | Provider-native tool-result messages remain — SOL-042 |
+| [#23](https://github.com/L-K-M/Seance/pull/23) | DECCKM cursor keys on mobile | Custom key decks and larger touch targets remain — SEA-020 |
+| [#24](https://github.com/L-K-M/Seance/pull/24) | Grapheme-safe label truncation | The helper was not reused elsewhere — SEA-006 |
+| [#25](https://github.com/L-K-M/Seance/pull/25) | Validate sync enrollment | Transactional re-key/recovery remains — SOL-030 |
+| [#26](https://github.com/L-K-M/Seance/pull/26) | Reserve a usable terminal width; clamp pane drags | Persistence, collapse, and the single 960 px cliff remain — SOL-060, SEA-015, SEA-018 |
+| [#27](https://github.com/L-K-M/Seance/pull/27) | Terminal selection overhaul (vendored xterm fork) | No scrollback search — SEA-023 |
+| [#28](https://github.com/L-K-M/Seance/pull/28) | Per-server connection tabs | Tabs were unnamed and unreachable by keyboard — #33, SEA-025 |
+| [#29](https://github.com/L-K-M/Seance/pull/29) | Notify when a newer release exists | — |
+| [#30](https://github.com/L-K-M/Seance/pull/30) | Identity files in the macOS sandbox; Browse…; read audit log | Resolves SOL-036 |
+| [#31](https://github.com/L-K-M/Seance/pull/31) | Harden the PR-review workflow | — |
 
-### Reviewed PRs Merged After Analysis
+### Open, from the 2026-07-25 pass
 
-PRs #6 through #14 were merged after the review and analysis commit. Their
-changes are now part of `main`; the notes below are residual risks or follow-up
-work found during review, not a request to revert the merged improvements.
+Each is on its own branch, with mostly disjoint files so they can land in any
+order. Every one is `analyze`-clean with tests.
 
-| PR | Merged change | Residual review finding |
-|---|---|---|
-| [#6](https://github.com/L-K-M/Seance/pull/6) | Atomic JSON writes and corruption recovery | All writers share one `.tmp` path; concurrent fallback can delete a valid destination; transient I/O is treated as corruption |
-| [#7](https://github.com/L-K-M/Seance/pull/7) | Credential edit guard, port validation, supported default auth | Blank-key wipe is fixed, but auth transitions can retain a wrong old secret; editor paths lack direct tests |
-| [#8](https://github.com/L-K-M/Seance/pull/8) | HTTP/LLM/search timeouts | `Future.timeout` does not cancel the request; owned clients still lack disposal; stream idle/body limits remain |
-| [#9](https://github.com/L-K-M/Seance/pull/9) | Expanded danger-linter patterns | Quoted paths, long options, redirection, and option-order forms still evade rules |
-| [#10](https://github.com/L-K-M/Seance/pull/10) | Honor redaction toggle and lint chat commands | Outbound inspector remains absent; broader redaction limitations remain under SOL-045 |
-| [#11](https://github.com/L-K-M/Seance/pull/11) | Body, batch, and blob limits | No account quotas or pull pagination; configured limits still need strict startup validation |
-| [#12](https://github.com/L-K-M/Seance/pull/12) | Reconnect controller binding and scrollback-wide select-all | Reconnect production path and helper are not directly covered |
-| [#13](https://github.com/L-K-M/Seance/pull/13) | Reject KDF downgrades | 4 GiB memory ceiling and unbounded iterations/parallelism/hash length still allow client DoS |
-| [#14](https://github.com/L-K-M/Seance/pull/14) | Pause probes in the background | Bootstrap/background ordering and Flutter lifecycle wiring need broader tests |
-| [#15](https://github.com/L-K-M/Seance/pull/15) | Snippet filtering and dialog controller lifecycle | Review regressions were fixed before merge: controllers now belong to route State and an active filter remains editable below the normal visibility threshold |
-
-### Existing PRs Still Open
-
-| PR | Intended change | Review assessment before merge |
-|---|---|---|
-| [#16](https://github.com/L-K-M/Seance/pull/16) | Publish a stably signed Android APK | The upgrade-signature blocker is fixed with a deliberately public, stable sideloading key; remove the temporary PR-only signing workflow before merge and document that this provides continuity, not publisher authenticity |
-
-### Open PRs Created From This Analysis
-
-Each change is on its own branch to minimize conflict and was independently
-reviewed after implementation.
-
-| PR | Change | Verification | Remaining scope |
+| PR | Change | Addresses | Verification |
 |---|---|---|---|
-| [#17](https://github.com/L-K-M/Seance/pull/17) | Advance sync cursor only through observed pulls; do not use push watermarks; keep rejected writes dirty until the winner is pulled | Core full suite + analysis | Atomic server pull snapshots and local CAS remain |
-| [#18](https://github.com/L-K-M/Seance/pull/18) | Parse private keys before opening an SSH socket | Core full suite + analysis | Handshake/auth deadlines and general ownership cleanup remain |
-| [#19](https://github.com/L-K-M/Seance/pull/19) | Prune expired login-limiter buckets periodically | Server full suite + analysis | Source-IP policy, active-window spray, and distributed limiting remain |
-| [#20](https://github.com/L-K-M/Seance/pull/20) | Preserve UTF-8 decoder state across SSH packets; fix headless UTF-8 | Core and Flutter full suites + analysis | Output batching/backpressure remains |
-| [#21](https://github.com/L-K-M/Seance/pull/21) | Enforce canonical 32-byte recovery codes and a fixed vector | Protocol full suite + analysis | Recovery-key semantics/enrollment UI remain |
-| [#22](https://github.com/L-K-M/Seance/pull/22) | Complete bounded chat tool loops with a final tools-disabled turn | Core full suite + analysis | Provider-native tool-result messages remain |
-| [#23](https://github.com/L-K-M/Seance/pull/23) | Respect DECCKM for mobile cursor keys and add control semantics | Flutter full suite + analysis | Custom key decks and larger touch targets remain |
-| [#24](https://github.com/L-K-M/Seance/pull/24) | Truncate labels by grapheme and expose full semantic labels | Flutter full suite + analysis | Broader status/terminal accessibility remains |
-| [#25](https://github.com/L-K-M/Seance/pull/25) | Validate sync enrollment, confirm registration passphrase, and perform an initial sync | Flutter full suite + analysis | Transactional re-key/recovery remains |
-| [#26](https://github.com/L-K-M/Seance/pull/26) | Reserve a usable terminal width and clamp pane drags | Flutter full suite + analysis | Pane persistence/collapse and mobile navigation remain |
+| [#32](https://github.com/L-K-M/Seance/pull/32) | Configurable terminal appearance: size, family, palette, zoom shortcuts | SEA-013, SOL-061 (part) | 145 Flutter tests (+9) |
+| [#33](https://github.com/L-K-M/Seance/pull/33) | Session tab names from OSC 7/0/2, plus a host/cwd/exit status bar | SEA-014 | 149 Flutter tests (+13) |
+| [#34](https://github.com/L-K-M/Seance/pull/34) | Server list filter, Enter-to-open, Escape-to-clear | SEA-024 | 141 Flutter tests (+5) |
+| [#35](https://github.com/L-K-M/Seance/pull/35) | Connection-log rebuild storm; bounded `recentText`; teardown hygiene | SEA-001, SEA-005, SEA-011, SOL-057 (part) | 142 Flutter tests (+6) |
+| [#36](https://github.com/L-K-M/Seance/pull/36) | Skip probing connected hosts; bound probe concurrency | SEA-003, SEA-004 | 193 Dart tests (+6) |
+| [#37](https://github.com/L-K-M/Seance/pull/37) | Chat survives the drawer closing; pane-proportional bubbles | SEA-010, SEA-016, SOL-065 (part) | 143 Flutter tests (+7) |
+| [#38](https://github.com/L-K-M/Seance/pull/38) | Quarantine a corrupt settings file; salvage `deviceId` | SEA-002 | 145 Flutter tests (+9) |
 
 ## Immediate P0 Work
 
@@ -911,6 +921,10 @@ Priority: P2
 Probe sweeps, sync status, suggestions, and sessions rebuild broad shell/server/
 terminal/sidebar widgets through one notifier.
 
+PR #35 removed the worst symptom — a full-tree rebuild per SSH trace line
+during every handshake — by giving the connection log its own notifier. The
+split itself remains.
+
 Action:
 
 - Split server status, sessions, sync, settings, and suggestions into focused listenables/selectors.
@@ -963,15 +977,16 @@ Remaining actions:
 
 Priority: P1
 
-`SeanceTheme.monoFallback` is unused. Terminal style stays on xterm defaults and
-offers no font size/family, light/dark palette, cursor, scrollback, ligature, or
-bell controls.
+PR #32 applies a deliberate terminal style, adopts the mono fallback stack
+(which was dead code), adds persisted font size/family, ships spectral
+light/dark palettes with a follow-the-app mode, and binds zoom shortcuts with
+clamped limits.
 
-Action:
+Remaining actions:
 
-- Apply a deliberate terminal style and the mono fallback stack.
-- Add zoom shortcuts and accessible font-size limits.
-- Add professional spectral light/dark palettes, cursor, bell, and scrollback controls.
+- Cursor shape and blink controls.
+- Scrollback length and bell behavior controls.
+- Ligature and OSC 52 / title policy controls.
 
 ### SOL-062: Use laptop-safe and remembered window geometry
 
@@ -1019,13 +1034,183 @@ Action:
 
 Priority: P2
 
-Chat bubbles cap at 300 px in a wide panel; the drawer is a fixed 380 px on
-narrow phones; several long credential dialogs need scroll/keyboard constraints.
+PR #37 sizes chat bubbles from the pane's own constraints. The drawer is still
+a fixed 380 px on narrow phones, and several long credential dialogs still need
+scroll/keyboard constraints.
 
-Action:
+Remaining actions:
 
-- Size bubbles/drawers from available constraints.
+- Size the drawer from available constraints.
 - Make every credential/long-content dialog scrollable and keyboard-safe.
+
+## 2026-07-25 Pass: Open Findings
+
+Findings from the second review pass that are **not** covered by PRs #32–#38.
+Items resolved by those PRs are recorded in
+[Resolved And Retired](#resolved-and-retired).
+
+### Correctness
+
+#### SEA-006: Grapheme-unsafe truncation outside the helper that fixes it
+
+Priority: P3
+
+`AppState._snippetTitle` (`substring(0, 39)`) and `AppState._shortError`
+(`substring(0, 200)`) can split a surrogate pair and produce a lone surrogate —
+the exact class of bug `MiddleEllipsisText` and PR #24 exist to prevent.
+
+Action: route both through the grapheme-aware helper.
+
+#### SEA-007: Repeated ssh_config import silently duplicates hosts
+
+Priority: P2
+
+`AppState.importSshConfig` assigns a fresh `uuidV4()` per parsed host and stores
+it unconditionally. Importing the same file twice yields two copies of every
+host, with no dedupe by host/port/user and no preview.
+
+Action: import with a preview and a dedupe pass; see also SEA-027.
+
+#### SEA-008: macOS terminal-focus flag is never cleared on dispose
+
+Priority: P3
+
+`_SessionViewState` reports focus to the native Edit menu over the
+`seance/menu` channel but never sends `false` from `dispose()`. If the last
+terminal is torn down while focused, the native menu keeps believing a terminal
+is focused. Degrades to "⌘C does nothing", not a crash.
+
+Action: send `false` on dispose.
+
+#### SEA-009: The destructive-close guard lives in one call site, not in the operation
+
+Priority: P1 — **settle before adding tab shortcuts**
+
+`AppState.closeTab` calls `_disposeSession(deleteLocalCopies: true)`, which
+permanently deletes unsaved managed SFTP edits. The only confirmation is the
+dialog in `TerminalPane._closeTab`. Any new call site — a ⌘W binding, a menu
+item, a mobile swipe — silently deletes user data.
+
+Action: move the guard behind the state operation, or split the destructive
+variant into a distinctly named method, *before* SEA-025 lands.
+
+#### SEA-012: Every session of every server stays fully mounted
+
+Priority: P2
+
+`TerminalPane._body` builds an `IndexedStack` over all sessions across all
+servers. The instant-switch rationale is sound, but the cost scales with total
+open tabs, not with tabs of the visible server: each mounted `TerminalView`
+holds a render object and paragraph cache, participates in every layout pass,
+and forwards a PTY resize to its remote host on every window resize.
+
+Action: mount the active server's tabs eagerly plus an LRU of others.
+
+### Interface and layout
+
+#### SEA-015: The layout collapses to the phone UI below 960 px
+
+Priority: P2 (refines SOL-060)
+
+`AdaptiveShell.breakpoint` is 200 + 480 + 260 + 2×10 = **960**. A half-screen
+window on a 13" laptop (~720 px) or an iPad in split view therefore loses the
+server list *and* the tiled utility panel at once.
+
+Action: two-stage response — drop the utility pane to a drawer first (keeping
+list + terminal tiled to ~700 px), then collapse fully.
+
+#### SEA-017: Assistant replies are unformatted plain text
+
+Priority: P1 (same item as the P1 in "Daily workflow")
+
+`SelectableText(m.text)`. Model answers arrive with fenced code, lists, and
+inline code, and render as a wall of proportional text with no per-block copy
+affordance.
+
+#### SEA-018: Pane widths, active host, and utility tab are not remembered
+
+Priority: P2 (refines SOL-060)
+
+`_AdaptivePaneLayoutState` initialises to constants on every launch; so does
+the sidebar's selected tab and the last active server.
+
+#### SEA-019: Status colors are hardcoded and theme-blind
+
+Priority: P2 (refines SOL-064)
+
+`StatusColors.online/offline/unknown` take a `BuildContext` and ignore it,
+returning fixed GitHub-dark hexes. `#3FB950` on a light surface is ≈2.1:1,
+below WCAG's 3:1 for non-text indicators. The signature is already right.
+
+#### SEA-020: Tab-strip touch targets are below the platform minimum
+
+Priority: P2 (refines SOL-064)
+
+The tab close button is a 15 px icon in a 28 px box inside a 38 px strip, shown
+on touch platforms too. Material and HIG both want ≥44–48 px.
+
+#### SEA-021: Two similar dots per server row read as one broken indicator
+
+Priority: P3
+
+A filled 12 px connection dot on the left and a 10 px outlined reachability dot
+on the right, both grey when idle. The distinction is deliberate and documented
+but reads as a rendering bug. A single composed indicator — filled for the
+session, ring for reachability — would say the same thing in one glyph.
+
+### Missing features
+
+#### SEA-023: No scrollback search
+
+Priority: P1 — **the most conspicuous missing terminal feature**
+
+The vendored fork already carries `searchHitBackground`,
+`searchHitForeground` and `searchHitBackgroundCurrent` in `TerminalTheme`, so
+the render path has a slot for hit highlighting — but there is no search
+controller, no UI, and no buffer-scanning path.
+
+Action: implement in the fork (viewport control + hit highlighting) behind a
+⌘F / Ctrl+Shift+F panel. Non-trivial; worth doing properly.
+
+#### SEA-025: Almost no keyboard shortcuts
+
+Priority: P1
+
+`AppMenus` binds exactly two: new tab and settings. Missing, roughly in order:
+close tab (⌘W / Ctrl+Shift+W — **after SEA-009**), select tab 1–9, cycle tabs
+(Ctrl+Tab, ⌘⇧[ / ⌘⇧]), focus the server filter, clear terminal.
+
+Constraint that makes this subtle: the terminal handles most `Ctrl` chords
+itself and returns `handled`, so app-level bindings must use ⌘ on Apple and
+`Ctrl+Shift` elsewhere — the convention `_handleKeyEvent` already establishes.
+
+#### SEA-026: No auto-reconnect and no session restore
+
+Priority: P2
+
+A dropped connection leaves a manual Reconnect button. For a mobile client that
+changes network constantly, opt-in reconnect-with-backoff and a "reopen my tabs
+at launch" option are the difference between usable and irritating. The
+mechanism exists: `_restoreManagedEditSessions` already recreates placeholder
+tabs, but only for durable file edits.
+
+#### SEA-027: SSH config import is paste-only
+
+Priority: P2
+
+The tooltip says "Import ~/.ssh/config" but the dialog only accepts pasted text
+— on desktop, where the file is readable and the app already has a native
+file-picker plus security-scoped bookmark path for identity files.
+
+Action: add Browse…, reusing the existing bookmark plumbing. Pair with SEA-007.
+
+#### SEA-028: No "copy last command output"
+
+Priority: P2
+
+With OSC 133 marks already parsed, `Copy last output` / `Copy last command` /
+`Rerun` are a short step away and are the actions people actually reach for.
+The minimum viable slice of SOL's command-block treatment.
 
 ## User Experience And Missing Features
 
@@ -1126,6 +1311,67 @@ Use calm near-black/navy terminal surfaces, parchment-warm highlights, muted
 violet, and one vivid status accent. Keep photographic ghost art for onboarding
 or marketing and use a simpler terminal/sigil mark at launcher and toolbar size.
 
+### Séance-specific ideas from the 2026-07-25 pass
+
+These are additive to the list above, not replacements.
+
+#### SEA-031: "The spirit answered" — completion notices
+
+When an OSC 133 `D` arrives for a session that is not on screen, pulse that tab
+and optionally post an OS notification with the command, its exit code, and how
+long it took. Everything needed is already parsed. A long `apt upgrade` on a
+background tab is the canonical case, and the framing writes itself.
+
+#### SEA-032: Ghost tabs — undo close
+
+A closed tab leaves a translucent chip in the strip for ~10 s. Clicking it
+reopens a session on the same host and, where shell integration is present,
+`cd`s back to the last known working directory. Also defuses SEA-009 for the
+common "wrong tab" mistake.
+
+#### SEA-033: Host hues
+
+Hash the host key fingerprint — already the canonical identity — into a hue used
+for the tab underline, the status-bar edge, and the server-row accent. Unlike
+production wards, which need the user to tag things, this is automatic and
+zero-config, and makes "which box am I on" a peripheral-vision question. Same
+input as the spirit sigils, a second representation.
+
+#### SEA-034: Whisper mode
+
+A one-key toggle — auto-armed when the shell reports a no-echo prompt — that
+suspends command capture *and* excludes the next lines from assistant context,
+with a quiet visual indicator. This retires the caveat that command suggestions
+cannot tell a command from a password by making it an explicit, visible mode
+instead of an opt-out.
+
+#### SEA-035: Séance transcript
+
+Export a session as Markdown — commands, outputs, timestamps, host, duration —
+with redaction applied, into a snippet, a file, or the clipboard. The
+scrollback, the OSC 133 marks, and the redactor all exist; this is assembly.
+
+#### SEA-036: Latency as a pulse, not a number
+
+dartssh2 already sends a keepalive every ten seconds and gets a reply.
+Surfacing the round trip as a slow, low-contrast pulse on the connection dot
+(with the millisecond figure on hover) answers "is the link alive or is the box
+wedged?" without another readout. Must respect reduced motion.
+
+#### SEA-037: Two-hand mobile key deck
+
+The key row is one scrolling strip. On a phone held in two hands the reachable
+zones are the lower corners: modifiers left, navigation right, punctuation in a
+pull-up drawer. Pairs with the per-host decks above.
+
+#### SEA-038: Idle divination
+
+When a session is idle and reachable, occasionally sample cheap facts the
+assistant would otherwise have to ask for (uptime, disk pressure, pending
+reboots) — only with explicit per-server opt-in, and shown as a passive reading
+on the server row rather than injected into the terminal. Fills the empty
+`HostContext` without the assistant guessing.
+
 ## Test And Release Gates
 
 Before sync or credential handling is described as production-ready:
@@ -1139,6 +1385,28 @@ Before sync or credential handling is described as production-ready:
 - Add signed iOS/macOS keystore relaunch and stable Android upgrade tests.
 - Add adaptive golden/semantics tests at phone, tablet, laptop, and large text sizes.
 - Run the Docker image in CI with persistence, readiness, register/login/push/pull, restart, and SIGTERM.
+
+## Resolved And Retired
+
+Kept rather than deleted, so a future reader can tell "done" from "never
+considered". Each row names the evidence.
+
+| Item | Resolution |
+|---|---|
+| SOL-036 — sandbox-compatible private-key selection on macOS | **Done** in #30: `~` expansion against the real home (`expandHomePath`), a read-only `~/.ssh` entitlement exception, Browse… minting security-scoped bookmarks (`identity_bookmarks.dart`), an actionable error instead of a raw `PathNotFoundException`, and a device-local read audit trail. |
+| SOL-010 residual — "honor the redaction toggle" (still listed as open in `docs/STATUS.md`) | **Done** in #10: `chat_sidebar.dart` and `command_generator.dart` both construct `SecretRedactor(enabled: settings.redactionEnabled)`. `docs/STATUS.md` is stale here — SEA-030. |
+| SOL-032 — cancel stale connection attempts and dispose every engine | **Done**: `AppState._connect` closes a session whose tab was replaced mid-connect (`identical(sessionById(tab.id), tab)`), and `XtermTerminalEngine.dispose` is idempotent. The remaining fire-and-forget teardown in `AppState.dispose` is fixed in #35. |
+| SOL-033 — reconcile remote shell closure | **Done**: `SshSession._remoteClosed` drains stdout/stderr with a deadline before teardown, and `onClosed` flips the tab to disconnected, releasing the SFTP controller and retaining local copies. |
+| SEA-001, SEA-005, SEA-011 | #35 |
+| SEA-002 | #38 |
+| SEA-003, SEA-004 | #36 |
+| SEA-010, SEA-016 | #37 |
+| SEA-013 | #32 (size, family, palette, zoom; cursor/bell/scrollback controls remain under SOL-061) |
+| SEA-014 | #33 |
+| SEA-024 | #34 |
+| SEA-022 | Superseded by SEA-031, which is the feature rather than the gap. |
+| SEA-029 | Not a finding — a confirmation that the previous pass's power-user gaps (ssh-agent, port forwarding, ProxyJump execution, splits, Mosh, provider-native search, streaming replies, OSC 133 context) are all still open. |
+| SEA-030 | Documentation drift; fold into the next `docs/STATUS.md` update: the redaction item is done, the tab strip now shows at one tab, and `AGENTS.md` §8 names a long-dead development branch. |
 
 ## Strengths To Preserve
 
