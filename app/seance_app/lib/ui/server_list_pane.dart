@@ -45,8 +45,19 @@ class _ServerListPaneState extends State<ServerListPane> {
     _setQuery('');
   }
 
-  /// Enter opens the only remaining match — the fast path for "type three
-  /// letters, hit return, you're on the box".
+  /// Drop a stale query once the list it filtered is empty, so adding a server
+  /// afterwards shows it instead of "No servers match". Deferred to after the
+  /// frame because this is observed from inside a build.
+  void _dropStaleQuery() {
+    if (_query.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _query.isNotEmpty) _clearQuery();
+    });
+  }
+
+  /// Open the first match — the fast path for "type three letters, hit return,
+  /// you're on the box". Deliberately works with several matches too; the
+  /// helper text says which one Enter will take.
   void _openFirstMatch(List<ServerConfig> matches) {
     if (matches.isEmpty) return;
     _searchFocus.unfocus();
@@ -82,6 +93,7 @@ class _ServerListPaneState extends State<ServerListPane> {
       body: ListenableBuilder(
         listenable: state,
         builder: (context, _) {
+          if (state.servers.isEmpty) _dropStaleQuery();
           final matches = filterServers(state.servers, _query);
           // Keep the field once a query is active even if the match count
           // drops below the threshold, or filtering would strand an
