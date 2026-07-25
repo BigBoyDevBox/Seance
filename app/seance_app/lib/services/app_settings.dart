@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:seance_core/seance_core.dart';
 
+import '../ui/terminal_appearance.dart';
 import 'atomic_file.dart';
 import 'external_file_opener.dart';
 
@@ -94,6 +95,15 @@ class AppSettings {
   /// fall back to the server's identity file *path*.
   Map<String, IdentityFileBookmark> identityFileBookmarks;
 
+  /// Terminal appearance. Device-local by design: the right font size depends
+  /// on the screen in front of you, not on the account, so these never sync.
+  double terminalFontSize;
+
+  /// Preferred monospace family for the terminal grid. Empty means "use the
+  /// app's own stack" ([SeanceTheme.monoFallback]).
+  String terminalFontFamily;
+  TerminalPalette terminalPalette;
+
   /// Stable per-device id used in synced records' conflict resolution.
   String deviceId;
 
@@ -119,6 +129,9 @@ class AppSettings {
     Map<String, List<String>>? remotePathBookmarks,
     Map<String, bool>? remoteShowHidden,
     Map<String, IdentityFileBookmark>? identityFileBookmarks,
+    this.terminalFontSize = kDefaultTerminalFontSize,
+    this.terminalFontFamily = '',
+    this.terminalPalette = TerminalPalette.followApp,
     this.deviceId = '',
     this.snippetsSeeded = false,
   }) : editorRegistry = editorRegistry ?? EditorRegistry(),
@@ -150,6 +163,9 @@ class AppSettings {
     'remoteShowHidden': remoteShowHidden,
     'identityFileBookmarks': identityFileBookmarks
         .map((id, entry) => MapEntry(id, entry.toJson())),
+    'terminalFontSize': terminalFontSize,
+    'terminalFontFamily': terminalFontFamily,
+    'terminalPalette': terminalPalette.name,
     'deviceId': deviceId,
     'snippetsSeeded': snippetsSeeded,
   };
@@ -178,6 +194,17 @@ class AppSettings {
     remotePathBookmarks: _bookmarkMap(json['remotePathBookmarks']),
     remoteShowHidden: _boolMap(json['remoteShowHidden']),
     identityFileBookmarks: _identityBookmarkMap(json['identityFileBookmarks']),
+    // Clamped on read: a hand-edited or downgraded settings file must never be
+    // able to render the terminal at an unusable size.
+    terminalFontSize: clampTerminalFontSize(
+      (json['terminalFontSize'] as num?)?.toDouble() ??
+          kDefaultTerminalFontSize,
+    ),
+    terminalFontFamily: json['terminalFontFamily'] as String? ?? '',
+    terminalPalette: TerminalPalette.values.firstWhere(
+      (p) => p.name == json['terminalPalette'],
+      orElse: () => TerminalPalette.followApp,
+    ),
     deviceId: json['deviceId'] as String? ?? '',
     snippetsSeeded: json['snippetsSeeded'] as bool? ?? false,
   );

@@ -13,6 +13,7 @@ import 'app_menus.dart';
 import 'command_generator.dart';
 import 'files_pane.dart';
 import 'sidebar_panel.dart';
+import 'terminal_appearance.dart';
 import 'terminal_keyboard_bar.dart';
 
 /// Touch platforms get the on-screen key row (Tab/Ctrl/arrows) and need the
@@ -440,24 +441,37 @@ class _SessionViewState extends State<_SessionView> {
     if (!tab.isConnected) {
       return _Disconnected(tab: tab, state: widget.state);
     }
+    final appearance = TerminalAppearance.resolve(
+      widget.state.services.settings,
+      Theme.of(context).brightness,
+    );
     // Click semantics (single/double/triple, shift-click extension, drag
     // anchoring, edge autoscroll) live in the vendored xterm fork — one owner
     // in the gesture arena. The old app-side Listener machine raced xterm's
     // recognizers: its selections were force-cleared ~100ms later.
-    return TerminalView(
-      tab.engine.terminal,
-      controller: _terminalController,
-      focusNode: _focus,
-      autofocus: widget.isActive,
-      onKeyEvent: _handleKeyEvent,
-      // No default shortcut layer: _handleKeyEvent and the menus already
-      // cover copy/paste/select-all, and xterm's defaults hijacked plain
-      // Ctrl+A (readline line-home) into a select-all and ate Ctrl+V before
-      // the shell ever saw it.
-      shortcuts: const <ShortcutActivator, Intent>{},
-      onSecondaryTapDown: (details, _) =>
-          _showContextMenu(context, details.globalPosition),
-      padding: const EdgeInsets.all(6),
+    return ColoredBox(
+      // The padding around the grid is outside xterm's own painted area, so
+      // without this the app surface would frame the terminal in a mismatched
+      // color at every edge.
+      color: appearance.theme.background,
+      child: TerminalView(
+        tab.engine.terminal,
+        controller: _terminalController,
+        focusNode: _focus,
+        autofocus: widget.isActive,
+        onKeyEvent: _handleKeyEvent,
+        textStyle: appearance.style,
+        theme: appearance.theme,
+        keyboardAppearance: appearance.brightness,
+        // No default shortcut layer: _handleKeyEvent and the menus already
+        // cover copy/paste/select-all, and xterm's defaults hijacked plain
+        // Ctrl+A (readline line-home) into a select-all and ate Ctrl+V before
+        // the shell ever saw it.
+        shortcuts: const <ShortcutActivator, Intent>{},
+        onSecondaryTapDown: (details, _) =>
+            _showContextMenu(context, details.globalPosition),
+        padding: const EdgeInsets.all(6),
+      ),
     );
   }
 
@@ -503,6 +517,32 @@ class _SessionViewState extends State<_SessionView> {
     }
     if (clip && event.logicalKey == LogicalKeyboardKey.keyA) {
       terminalSelectAll(widget.tab);
+      return KeyEventResult.handled;
+    }
+    // Zoom. `equal` covers the unshifted key that carries "+" on most layouts,
+    // and `add`/`minus`/`numpadAdd` cover the numeric keypad, so ⌘+ works
+    // whether or not the user reaches for Shift.
+    final zoomIn = {
+      LogicalKeyboardKey.equal,
+      LogicalKeyboardKey.add,
+      LogicalKeyboardKey.numpadAdd,
+    };
+    final zoomOut = {
+      LogicalKeyboardKey.minus,
+      LogicalKeyboardKey.numpadSubtract,
+    };
+    if (clip && zoomIn.contains(event.logicalKey)) {
+      widget.state.zoomTerminal(kTerminalFontSizeStep);
+      return KeyEventResult.handled;
+    }
+    if (clip && zoomOut.contains(event.logicalKey)) {
+      widget.state.zoomTerminal(-kTerminalFontSizeStep);
+      return KeyEventResult.handled;
+    }
+    if (clip &&
+        (event.logicalKey == LogicalKeyboardKey.digit0 ||
+            event.logicalKey == LogicalKeyboardKey.numpad0)) {
+      widget.state.zoomTerminal(null);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
