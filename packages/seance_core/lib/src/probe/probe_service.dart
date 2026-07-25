@@ -58,11 +58,26 @@ class TcpBannerProber implements Prober {
 /// Periodically probes a set of servers and reports status changes. Probing is
 /// jittered and pauses when the app is not visible, to keep sshd logs quiet and
 /// avoid tripping fail2ban-style tooling. Servers with an active session are
-/// reported [online] for free via keepalives and can be excluded here.
+/// reported [online] for free via keepalives and are excluded from probing —
+/// see [connectedServerIds].
 class ProbeService {
   final Prober prober;
   final Duration interval;
   final Duration timeout;
+
+  /// How many probes may be in flight at once. A sweep over an imported
+  /// `~/.ssh/config` can cover dozens of hosts; opening a socket to all of
+  /// them at once bursts the network — badly so on a mobile radio, and in
+  /// competition with the live session the user is actually typing into.
+  final int maxConcurrentProbes;
+
+  /// Ids of servers that already hold a live SSH session, supplied by the app.
+  ///
+  /// Those hosts are demonstrably reachable and dartssh2 is already keeping
+  /// the transport warm, so probing them adds nothing but a TCP connect and an
+  /// `sshd` log line every sweep — for a machine you are looking at.
+  Set<String> Function()? connectedServerIds;
+
   final Random _random;
 
   Timer? _timer;
@@ -74,20 +89,48 @@ class ProbeService {
     this.prober = const TcpBannerProber(),
     this.interval = const Duration(seconds: 45),
     this.timeout = const Duration(seconds: 5),
+    this.maxConcurrentProbes = 6,
+    this.connectedServerIds,
     Random? random,
-  }) : _random = random ?? Random();
+  })  : assert(maxConcurrentProbes > 0),
+        _random = random ?? Random();
 
   /// Latest status per server id, pushed on every sweep.
   Stream<Map<String, ProbeStatus>> get statuses => _controller.stream;
 
-  /// Probe every server once. Servers whose `authMethod`/reachability is
-  /// unknown still get a status; the map is keyed by server id.
-  Future<Map<String, ProbeStatus>> probeAll(List<ServerConfig> servers) async {
-    final results = await Future.wait(servers.map((s) async {
-      final status = await prober.probe(s.host, s.port, timeout: timeout);
-      return MapEntry(s.id, status);
-    }));
-    return Map.fromEntries(results);
+  /// Probe every server once, at most [maxConcurrentProbes] at a time.
+  ///
+  /// Servers in [alreadyConnected] are reported [ProbeStatus.online] without a
+  /// probe. Servers whose reachability is unknown still get a status; the map
+  /// is keyed by server id.
+  Future<Map<String, ProbeStatus>> probeAll(
+    List<ServerConfig> servers, {
+    Set<String> alreadyConnected = const {},
+  }) async {
+    final results = <String, ProbeStatus>{};
+    final pending = <ServerConfig>[];
+    for (final server in servers) {
+      if (alreadyConnected.contains(server.id)) {
+        results[server.id] = ProbeStatus.online;
+      } else {
+        pending.add(server);
+      }
+    }
+
+    var next = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = next++;
+        if (index >= pending.length) return;
+        final server = pending[index];
+        results[server.id] =
+            await prober.probe(server.host, server.port, timeout: timeout);
+      }
+    }
+
+    final workers = min(maxConcurrentProbes, pending.length);
+    await Future.wait([for (var i = 0; i < workers; i++) worker()]);
+    return results;
   }
 
   void start(List<ServerConfig> servers) {
@@ -117,7 +160,12 @@ class ProbeService {
     _timer = Timer(delay, () async {
       if (_paused) return;
       if (!_controller.isClosed && _servers.isNotEmpty) {
-        _controller.add(await probeAll(_servers));
+        _controller.add(
+          await probeAll(
+            _servers,
+            alreadyConnected: connectedServerIds?.call() ?? const {},
+          ),
+        );
       }
       if (!_paused) _scheduleNext();
     });

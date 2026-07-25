@@ -196,6 +196,12 @@ class AppState extends ChangeNotifier {
     snippets = await services.snippetStore.listSnippets();
     await refreshLlmConfigured();
     _recomputeSuggestions();
+    // Skip hosts that already hold a live session: they are demonstrably
+    // reachable, and probing them only adds an sshd log line every sweep.
+    services.probe.connectedServerIds = () => {
+      for (final session in sessions)
+        if (session.isConnected) session.serverId,
+    };
     _probeSub = services.probe.statuses.listen((s) {
       statuses = s;
       notifyListeners();

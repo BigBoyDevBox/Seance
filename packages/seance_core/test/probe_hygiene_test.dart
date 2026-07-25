@@ -1,0 +1,115 @@
+import 'dart:async';
+
+import 'package:seance_core/seance_core.dart';
+import 'package:test/test.dart';
+
+/// A prober that records how many probes are in flight at once, and holds each
+/// one open until the test releases it.
+class _CountingProber implements Prober {
+  final List<String> probed = [];
+  int inFlight = 0;
+  int peakInFlight = 0;
+  final _gate = Completer<void>();
+
+  void release() => _gate.complete();
+
+  @override
+  Future<ProbeStatus> probe(
+    String host,
+    int port, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    probed.add(host);
+    inFlight++;
+    if (inFlight > peakInFlight) peakInFlight = inFlight;
+    await _gate.future;
+    inFlight--;
+    return ProbeStatus.online;
+  }
+}
+
+ServerConfig _server(String id) => ServerConfig(
+  id: id,
+  label: id,
+  host: '$id.example.com',
+  username: 'u',
+  createdAt: 0,
+  updatedAt: 0,
+);
+
+void main() {
+  group('probe fan-out is bounded', () {
+    test('never exceeds maxConcurrentProbes', () async {
+      final prober = _CountingProber();
+      final service = ProbeService(prober: prober, maxConcurrentProbes: 3);
+      addTearDown(service.dispose);
+
+      final servers = [for (var i = 0; i < 20; i++) _server('s$i')];
+      final pending = service.probeAll(servers);
+      // Let the first wave start before releasing them.
+      await Future<void>.delayed(Duration.zero);
+      expect(prober.peakInFlight, lessThanOrEqualTo(3));
+
+      prober.release();
+      final result = await pending;
+      expect(result.length, 20);
+      expect(prober.peakInFlight, lessThanOrEqualTo(3));
+      expect(prober.probed.length, 20);
+    });
+
+    test('a short list does not spin up idle workers', () async {
+      final prober = _CountingProber()..release();
+      final service = ProbeService(prober: prober, maxConcurrentProbes: 8);
+      addTearDown(service.dispose);
+      final result = await service.probeAll([_server('a'), _server('b')]);
+      expect(result.keys, unorderedEquals(['a', 'b']));
+      expect(prober.peakInFlight, lessThanOrEqualTo(2));
+    });
+  });
+
+  group('servers with a live session are not probed', () {
+    test('they are reported online without touching the network', () async {
+      final prober = _CountingProber()..release();
+      final service = ProbeService(prober: prober);
+      addTearDown(service.dispose);
+
+      final result = await service.probeAll(
+        [_server('live'), _server('idle')],
+        alreadyConnected: {'live'},
+      );
+      expect(result['live'], ProbeStatus.online);
+      expect(result['idle'], ProbeStatus.online);
+      expect(prober.probed, ['idle.example.com']);
+    });
+
+    test('every server still gets a status when all are connected', () async {
+      final prober = _CountingProber()..release();
+      final service = ProbeService(prober: prober);
+      addTearDown(service.dispose);
+
+      final result = await service.probeAll(
+        [_server('a'), _server('b')],
+        alreadyConnected: {'a', 'b'},
+      );
+      expect(result, {'a': ProbeStatus.online, 'b': ProbeStatus.online});
+      expect(prober.probed, isEmpty);
+    });
+
+    test('the periodic sweep consults connectedServerIds', () async {
+      final prober = _CountingProber()..release();
+      final service = ProbeService(
+        prober: prober,
+        interval: const Duration(milliseconds: 20),
+      );
+      addTearDown(service.dispose);
+      service.connectedServerIds = () => {'live'};
+
+      final sweep = service.statuses.first;
+      service.start([_server('live'), _server('idle')]);
+      final statuses = await sweep;
+
+      expect(statuses['live'], ProbeStatus.online);
+      expect(prober.probed, ['idle.example.com']);
+    });
+  });
+}
