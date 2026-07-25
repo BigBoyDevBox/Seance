@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
 
@@ -176,9 +177,18 @@ class ProbeService {
             ),
           );
         }
-      } catch (_) {
+      } catch (error, stack) {
         // A failed sweep must not become an unhandled async error, and must
-        // not stop the schedule: the next one is still queued below.
+        // not stop the schedule: the next one is still queued below. It must
+        // not be invisible either — `connectedServerIds` is caller-supplied
+        // and could throw, and a sweep that silently stops updating every
+        // status is undiagnosable without this.
+        developer.log(
+          'probe sweep failed',
+          name: 'seance.probe',
+          error: error,
+          stackTrace: stack,
+        );
       }
       if (!_paused) _scheduleNext();
     });

@@ -882,6 +882,10 @@ class AppState extends ChangeNotifier {
     _autoSyncTimer?.cancel();
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
+    // Drop the callback before the service goes: it closes over `sessions`,
+    // so a probe service that outlived this state would keep reading a list
+    // that is no longer maintained (and keep this object alive).
+    services.probe.connectedServerIds = null;
     services.probe.dispose();
     for (final t in sessions) {
       _disposeSession(t);
