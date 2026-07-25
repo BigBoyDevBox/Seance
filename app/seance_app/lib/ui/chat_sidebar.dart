@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:seance_core/seance_core.dart';
 
 import '../app_state.dart';
+import '../services/chat_session.dart';
 import '../main.dart';
 
 /// The always-available assistant. It sees the active session's recent output
@@ -15,29 +16,11 @@ class ChatSidebar extends StatefulWidget {
   State<ChatSidebar> createState() => _ChatSidebarState();
 }
 
-class _ChatMessage {
-  final bool fromUser;
-  final String text;
-  final List<String> staged; // commands placed in the prompt
-  final List<String> searches;
-  _ChatMessage(
-    this.fromUser,
-    this.text, {
-    this.staged = const [],
-    this.searches = const [],
-  });
-}
-
 class _ChatSidebarState extends State<ChatSidebar> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
-  final List<_ChatMessage> _messages = [];
-  ChatController? _chat;
-  int? _chatVersion; // the llmConfigVersion _chat was built with
   TerminalSession? _pasteTarget;
   bool _includeContext = true;
-  bool _sending = false;
-  String? _error;
 
   @override
   void dispose() {
@@ -47,20 +30,19 @@ class _ChatSidebarState extends State<ChatSidebar> {
   }
 
   Future<ChatController> _ensureController(AppState state) async {
-    final existing = _chat;
     // Rebuild if the provider settings changed since we last built (new key,
     // model, or base URL) — otherwise edits in Settings wouldn't take effect.
-    if (existing != null && _chatVersion == state.llmConfigVersion) {
-      return existing;
-    }
+    final existing = state.chat.controllerFor(state.llmConfigVersion);
+    if (existing != null) return existing;
     final provider = await state.services.buildLlmProvider();
     final search = await state.services.buildSearchProvider();
     final controller = ChatController(
       provider: provider,
       searchProvider: search,
       // Honor the "Redact secrets before sending" toggle (default on).
-      redactor:
-          SecretRedactor(enabled: state.services.settings.redactionEnabled),
+      redactor: SecretRedactor(
+        enabled: state.services.settings.redactionEnabled,
+      ),
       onPaste: (command) {
         // Place the (newline-free) command into the session that originated the
         // current chat turn, not whichever tab happens to be active later.
@@ -73,20 +55,16 @@ class _ChatSidebarState extends State<ChatSidebar> {
         session.engine.injectInput(command);
       },
     );
-    _chat = controller;
-    _chatVersion = state.llmConfigVersion;
+    state.chat.adoptController(controller, state.llmConfigVersion);
     return controller;
   }
 
   Future<void> _send(AppState state) async {
+    final chat = state.chat;
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
-    setState(() {
-      _messages.add(_ChatMessage(true, text));
-      _sending = true;
-      _error = null;
-      _input.clear();
-    });
+    if (text.isEmpty || chat.sending) return;
+    chat.addUserMessage(text);
+    _input.clear();
     _scrollToEnd();
 
     try {
@@ -96,22 +74,12 @@ class _ChatSidebarState extends State<ChatSidebar> {
       final context = _includeContext
           ? targetSession?.engine.recentText(maxLines: 200)
           : null;
-      final result = await controller.send(text, terminalContext: context);
-      setState(() {
-        _messages.add(
-          _ChatMessage(
-            false,
-            result.reply,
-            staged: result.stagedCommands,
-            searches: result.searchQueries,
-          ),
-        );
-      });
+      chat.addReply(await controller.send(text, terminalContext: context));
     } catch (e) {
-      setState(() => _error = e.toString());
+      chat.failed(e);
     } finally {
       _pasteTarget = null;
-      setState(() => _sending = false);
+      chat.finishSending();
       _scrollToEnd();
     }
   }
@@ -131,36 +99,48 @@ class _ChatSidebarState extends State<ChatSidebar> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    return SafeArea(
-      child: Column(
-        children: [
-          _header(context),
-          const Divider(height: 1),
-          Expanded(
-            child: _messages.isEmpty
-                ? const _ChatEmpty()
-                : ListView.builder(
-                    controller: _scroll,
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, i) => _bubble(context, _messages[i]),
-                  ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+    // The transcript lives on AppState, so this rebuilds from it rather than
+    // owning it — which is what lets the narrow-layout drawer close without
+    // taking the conversation with it.
+    return ListenableBuilder(
+      listenable: state.chat,
+      builder: (context, _) {
+        final chat = state.chat;
+        return SafeArea(
+          child: Column(
+            children: [
+              _header(context, chat),
+              const Divider(height: 1),
+              Expanded(
+                child: chat.isEmpty
+                    ? const _ChatEmpty()
+                    : ListView.builder(
+                        controller: _scroll,
+                        padding: const EdgeInsets.all(12),
+                        itemCount: chat.entries.length,
+                        itemBuilder: (context, i) =>
+                            _bubble(context, chat.entries[i]),
+                      ),
               ),
-            ),
-          _composer(context, state),
-        ],
-      ),
+              if (chat.error != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    chat.error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              _composer(context, state, chat),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _header(BuildContext context) {
+  Widget _header(BuildContext context, ChatSession chat) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
       child: Row(
@@ -172,17 +152,14 @@ class _ChatSidebarState extends State<ChatSidebar> {
           IconButton(
             tooltip: 'New chat',
             icon: const Icon(Icons.refresh),
-            onPressed: () => setState(() {
-              _messages.clear();
-              _chat?.reset();
-            }),
+            onPressed: chat.isEmpty ? null : chat.reset,
           ),
         ],
       ),
     );
   }
 
-  Widget _composer(BuildContext context, AppState state) {
+  Widget _composer(BuildContext context, AppState state, ChatSession chat) {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -228,8 +205,8 @@ class _ChatSidebarState extends State<ChatSidebar> {
               ),
               const SizedBox(width: 8),
               IconButton.filled(
-                onPressed: _sending ? null : () => _send(state),
-                icon: _sending
+                onPressed: chat.sending ? null : () => _send(state),
+                icon: chat.sending
                     ? const SizedBox(
                         width: 18,
                         height: 18,
@@ -244,42 +221,47 @@ class _ChatSidebarState extends State<ChatSidebar> {
     );
   }
 
-  Widget _bubble(BuildContext context, _ChatMessage m) {
+  Widget _bubble(BuildContext context, ChatEntry m) {
     final scheme = Theme.of(context).colorScheme;
-    return Align(
-      alignment: m.fromUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(10),
-        constraints: const BoxConstraints(maxWidth: 300),
-        decoration: BoxDecoration(
-          color: m.fromUser
-              ? scheme.primaryContainer
-              : scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText(m.text),
-            for (final q in m.searches)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
-                  children: [
-                    const Icon(Icons.search, size: 14),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'searched: $q',
-                        style: Theme.of(context).textTheme.labelSmall,
+    // Proportional to the pane, not a fixed 300: the utility pane is draggable
+    // to 680, and a pinned width meant widening the assistant bought nothing
+    // but margin. The 0.9 keeps the alignment readable as a left/right split.
+    return LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: m.fromUser ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(10),
+          constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.9),
+          decoration: BoxDecoration(
+            color: m.fromUser
+                ? scheme.primaryContainer
+                : scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(m.text),
+              for (final q in m.searches)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.search, size: 14),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          'searched: $q',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            for (final cmd in m.staged) _StagedCommand(command: cmd),
-          ],
+              for (final cmd in m.staged) _StagedCommand(command: cmd),
+            ],
+          ),
         ),
       ),
     );
@@ -327,8 +309,11 @@ class _StagedCommand extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded,
-                      size: 14, color: scheme.error),
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 14,
+                    color: scheme.error,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
