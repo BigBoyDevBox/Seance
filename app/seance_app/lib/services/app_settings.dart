@@ -253,11 +253,13 @@ class SettingsStore {
   final File file;
   Future<void> _saveTail = Future<void>.value();
 
+  bool _recoveredFromCorruptFile = false;
+
   /// True when [load] could not parse the settings file and started from
   /// defaults. The bad file is moved aside rather than overwritten, and the app
   /// says so — silently resetting the sync server, the provider configuration
   /// and the editor registry is not something the user should have to discover.
-  bool recoveredFromCorruptFile = false;
+  bool get recoveredFromCorruptFile => _recoveredFromCorruptFile;
 
   SettingsStore(this.file);
 
@@ -275,15 +277,21 @@ class SettingsStore {
       // Every other JSON store in the app quarantines an unreadable file; this
       // one used to overwrite it with defaults on the next save, which made the
       // loss permanent and unrecoverable.
-      await quarantineCorruptFile(file);
-      recoveredFromCorruptFile = true;
+      _recoveredFromCorruptFile = true;
       final salvaged = salvageSettings(raw);
-      // Write the salvage back immediately, through the same atomic path as
-      // any other save. Without this it would live only in memory: the bad
-      // file has been moved aside, so the next launch would find nothing,
-      // fall back to defaults, and mint the fresh deviceId this is here to
-      // avoid.
-      await save(salvaged);
+      try {
+        await quarantineCorruptFile(file);
+        // Write the salvage back immediately, through the same atomic path as
+        // any other save. Without this it would live only in memory: the bad
+        // file has been moved aside, so the next launch would find nothing,
+        // fall back to defaults, and mint the fresh deviceId this is here to
+        // avoid.
+        await save(salvaged);
+      } catch (_) {
+        // Recovering is best effort. A read-only or full disk must not turn an
+        // unreadable settings file into a failed launch — the app runs on the
+        // salvaged values and tries again next time.
+      }
       return salvaged;
     }
   }
