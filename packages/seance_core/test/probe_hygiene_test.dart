@@ -112,6 +112,11 @@ void main() {
         prober: prober,
         interval: const Duration(milliseconds: 10),
       );
+      // Belt and braces alongside the explicit dispose below: if the gate loop
+      // or an expectation fails first, a 10 ms timer would otherwise outlive
+      // this test and fire for the rest of the run. Disposing twice is safe —
+      // cancelling a null timer and closing a closed controller are no-ops.
+      addTearDown(service.dispose);
       service.start([_server('a')]);
 
       // Wait until the first sweep is actually inside the prober, so the
