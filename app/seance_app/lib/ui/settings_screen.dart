@@ -300,9 +300,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         helpTitle: 'Terminal appearance',
         help:
             'Font size, family, and colors apply to every session on this '
-            'device. Zoom without opening Settings with ⌘/Ctrl+Shift and + '
-            '− or 0 while the terminal is focused. Leave the font family '
-            'blank to use Séance’s bundled monospace stack.',
+            'device. With the terminal focused you can zoom without opening '
+            'Settings: ⌘ with +, − or 0 on macOS and iPadOS, Ctrl+Shift with '
+            'the same keys elsewhere (plain Ctrl chords belong to the shell). '
+            'Leave the font family blank to use Séance’s bundled monospace '
+            'stack.',
       ),
       Row(
         children: [
