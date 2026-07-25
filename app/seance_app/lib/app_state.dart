@@ -482,6 +482,11 @@ class AppState extends ChangeNotifier {
       }
       tab.retainedLocalCopies.clear();
     }
+    // Sever the log's callback before anything async begins: a trace line
+    // arriving during (or after) teardown would otherwise reach a notifier
+    // that is about to be disposed, which asserts. Freezing also stops the
+    // transcript growing while the transport closes.
+    tab.log.freeze();
     try {
       if (tab.session != null) {
         await tab.session!.close(); // SshSession.close disposes the engine
@@ -489,11 +494,6 @@ class AppState extends ChangeNotifier {
         await tab.engine.dispose();
       }
     } finally {
-      // Sever the log's callback before releasing the notifier it points at: a
-      // trace line arriving during (or after) a failed teardown would otherwise
-      // call notifyListeners on a disposed ChangeNotifier, which asserts.
-      // Freezing also stops the transcript growing while we tear down.
-      tab.log.freeze();
       tab.logNotifier.dispose();
     }
   }
@@ -912,6 +912,9 @@ class AppState extends ChangeNotifier {
         }),
       );
     }
+    // Teardown is in flight and does not read this list; clearing it makes the
+    // contract explicit — nothing may reach a session after this point.
+    sessions.clear();
     super.dispose();
   }
 }
