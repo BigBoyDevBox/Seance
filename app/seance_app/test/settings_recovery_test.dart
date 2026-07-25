@@ -106,6 +106,23 @@ void main() {
       expect(salvageSettings(null).deviceId, isEmpty);
     });
 
+    test('survives JSON escapes inside a value', () {
+      // A backslash used to end the capture, truncating the value in half —
+      // the same silent data loss this whole path exists to prevent.
+      final settings = salvageSettings(
+        r'{"deviceId":"abc\\def","syncUsername":"say \"hi\""} truncated',
+      );
+      expect(settings.deviceId, r'abc\def');
+      expect(settings.syncUsername, 'say "hi"');
+    });
+
+    test('a nested key of the same name is a documented limitation', () {
+      // Corrupt input cannot be parsed, so the scan is textual and cannot tell
+      // nesting apart. Pinned so the behaviour is a decision, not a surprise.
+      final settings = salvageSettings('{"editors":{"deviceId":"nested"},');
+      expect(settings.deviceId, 'nested');
+    });
+
     test('does not pick up a different key that ends in the same name', () {
       // "otherDeviceId" must not be mistaken for "deviceId".
       final settings = salvageSettings('{"otherDeviceId":"nope"} truncated');

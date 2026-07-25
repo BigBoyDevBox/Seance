@@ -195,9 +195,25 @@ class AppSettings {
 AppSettings salvageSettings(String? raw) {
   final settings = AppSettings();
   if (raw == null) return settings;
-  String? field(String name) => RegExp(
-    '"$name"\\s*:\\s*"([^"\\\\]*)"',
-  ).firstMatch(raw)?.group(1);
+  /// Sound only for a top-level key. A corrupt document cannot be parsed, so
+  /// this scans the raw text and would equally match the same key nested
+  /// inside another object — none of the three salvaged names is used as a
+  /// nested key today, and a wrong salvage is still bounded by being a string.
+  String? field(String name) {
+    final match = RegExp(
+      '"$name"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"',
+    ).firstMatch(raw);
+    final value = match?.group(1);
+    if (value == null) return null;
+    try {
+      // The capture is still JSON-escaped. Decode it as a JSON string so an
+      // escaped quote or backslash survives rather than truncating the value —
+      // a half-salvaged deviceId would defeat the point of salvaging at all.
+      return jsonDecode('"$value"') as String;
+    } catch (_) {
+      return value;
+    }
+  }
 
   final deviceId = field('deviceId');
   if (deviceId != null && deviceId.isNotEmpty) settings.deviceId = deviceId;
