@@ -137,7 +137,10 @@ class ProbeService {
       }
     }
 
-    final workers = min(maxConcurrentProbes, pending.length);
+    // max(1, …) as well as the assert: the assert is compiled out of release
+    // builds, where a zero would otherwise start no workers at all and skip
+    // every pending host in silence.
+    final workers = min(max(1, maxConcurrentProbes), pending.length);
     await Future.wait([for (var i = 0; i < workers; i++) worker()]);
     return results;
   }
