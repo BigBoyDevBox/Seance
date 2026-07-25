@@ -340,7 +340,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           hintText: 'e.g. JetBrains Mono — blank uses the built-in stack',
         ),
         onSubmitted: (_) => _persistTerminalAppearance(state),
-        onTapOutside: (_) => _persistTerminalAppearance(state),
+        onTapOutside: (_) {
+          // Overriding onTapOutside replaces TextField's default handler, so
+          // the dismissal it would have done has to be done here — otherwise
+          // the soft keyboard stays up after tapping away on mobile.
+          FocusManager.instance.primaryFocus?.unfocus();
+          _persistTerminalAppearance(state);
+        },
       ),
       const SizedBox(height: 16),
       DropdownButtonFormField<TerminalPalette>(
