@@ -277,7 +277,14 @@ class SettingsStore {
       // loss permanent and unrecoverable.
       await quarantineCorruptFile(file);
       recoveredFromCorruptFile = true;
-      return salvageSettings(raw);
+      final salvaged = salvageSettings(raw);
+      // Write the salvage back immediately, through the same atomic path as
+      // any other save. Without this it would live only in memory: the bad
+      // file has been moved aside, so the next launch would find nothing,
+      // fall back to defaults, and mint the fresh deviceId this is here to
+      // avoid.
+      await save(salvaged);
+      return salvaged;
     }
   }
 

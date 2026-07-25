@@ -63,6 +63,19 @@ void main() {
       expect(settings.syncUsername, 'ops');
     });
 
+    test('the salvage is written back, so it survives the next launch',
+        () async {
+      await file.writeAsString('{"deviceId":"device-1", truncated');
+      await SettingsStore(file).load();
+
+      // A second store, as a fresh launch would build it: the quarantined
+      // file is gone, so only a persisted salvage can carry the id across.
+      final relaunch = SettingsStore(file);
+      final settings = await relaunch.load();
+      expect(relaunch.recoveredFromCorruptFile, isFalse);
+      expect(settings.deviceId, 'device-1');
+    });
+
     test('salvages nothing it cannot find, and stays on defaults', () async {
       await file.writeAsString('not json at all');
       final settings = await load();
