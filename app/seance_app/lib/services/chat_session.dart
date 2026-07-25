@@ -45,6 +45,11 @@ class ChatSession extends ChangeNotifier {
   bool _sending = false;
   String? _error;
 
+  /// Bumped by [reset]. A turn that was in flight when the user started a new
+  /// conversation carries the old generation, so its reply is dropped instead
+  /// of landing in the freshly cleared transcript.
+  int _generation = 0;
+
   List<ChatEntry> get entries => List.unmodifiable(_entries);
   bool get sending => _sending;
   String? get error => _error;
@@ -55,21 +60,29 @@ class ChatSession extends ChangeNotifier {
   ChatController? controllerFor(int configVersion) =>
       _controllerVersion == configVersion ? _controller : null;
 
-  /// Adopt a freshly built controller for [configVersion], replaying the
-  /// transcript so a provider change mid-conversation does not lose context.
+  /// Adopt a freshly built controller for [configVersion].
+  ///
+  /// The visible transcript is kept, but the new controller starts with no
+  /// provider-side history: replaying earlier turns would ship a conversation
+  /// held with one provider to whichever one the user just switched to.
   void adoptController(ChatController controller, int configVersion) {
     _controller = controller;
     _controllerVersion = configVersion;
   }
 
-  void addUserMessage(String text) {
+  /// Start a turn. The returned token identifies it; pass it back to the
+  /// methods below so a turn that outlived a [reset] cannot write to the new
+  /// conversation.
+  int addUserMessage(String text) {
     _entries.add(ChatEntry(fromUser: true, text: text));
     _error = null;
     _sending = true;
     notifyListeners();
+    return _generation;
   }
 
-  void addReply(ChatResult result) {
+  void addReply(int turn, ChatResult result) {
+    if (turn != _generation) return;
     _entries.add(
       ChatEntry(
         fromUser: false,
@@ -81,20 +94,28 @@ class ChatSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void failed(Object error) {
+  void failed(int turn, Object error) {
+    if (turn != _generation) return;
     _error = error.toString();
     notifyListeners();
   }
 
-  void finishSending() {
+  void finishSending(int turn) {
+    if (turn != _generation || !_sending) return;
     _sending = false;
     notifyListeners();
   }
 
   /// Start a new conversation: clears the transcript and the provider history.
+  ///
+  /// Safe mid-flight. The composer stops showing a send in progress, and the
+  /// turn still awaiting a reply is orphaned by the generation bump rather
+  /// than dropping its answer into the empty conversation.
   void reset() {
+    _generation++;
     _entries.clear();
     _error = null;
+    _sending = false;
     _controller?.reset();
     notifyListeners();
   }

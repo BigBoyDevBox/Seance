@@ -63,7 +63,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
     final chat = state.chat;
     final text = _input.text.trim();
     if (text.isEmpty || chat.sending) return;
-    chat.addUserMessage(text);
+    final turn = chat.addUserMessage(text);
     _input.clear();
     _scrollToEnd();
 
@@ -74,13 +74,18 @@ class _ChatSidebarState extends State<ChatSidebar> {
       final context = _includeContext
           ? targetSession?.engine.recentText(maxLines: 200)
           : null;
-      chat.addReply(await controller.send(text, terminalContext: context));
+      chat.addReply(
+        turn,
+        await controller.send(text, terminalContext: context),
+      );
     } catch (e) {
-      chat.failed(e);
+      chat.failed(turn, e);
     } finally {
       _pasteTarget = null;
-      chat.finishSending();
-      _scrollToEnd();
+      chat.finishSending(turn);
+      // The transcript outlives this widget by design, but the scroll
+      // controller does not: the drawer may have closed during the await.
+      if (mounted) _scrollToEnd();
     }
   }
 

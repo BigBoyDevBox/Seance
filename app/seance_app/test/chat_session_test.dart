@@ -34,18 +34,19 @@ void main() {
       addTearDown(chat.dispose);
       expect(chat.isEmpty, isTrue);
 
-      chat.addUserMessage('what is eating the disk?');
+      final turn = chat.addUserMessage('what is eating the disk?');
       expect(chat.sending, isTrue);
       expect(chat.entries.single.fromUser, isTrue);
 
       chat.addReply(
+        turn,
         const ChatResult(
           reply: 'try du',
           stagedCommands: ['du -sh /var/*'],
           searchQueries: ['du usage'],
         ),
       );
-      chat.finishSending();
+      chat.finishSending(turn);
 
       expect(chat.sending, isFalse);
       expect(chat.entries.length, 2);
@@ -56,9 +57,9 @@ void main() {
     test('a failed turn records the error and still stops sending', () {
       final chat = ChatSession();
       addTearDown(chat.dispose);
-      chat.addUserMessage('hello');
-      chat.failed(StateError('provider unreachable'));
-      chat.finishSending();
+      final turn = chat.addUserMessage('hello');
+      chat.failed(turn, StateError('provider unreachable'));
+      chat.finishSending(turn);
       expect(chat.error, contains('provider unreachable'));
       expect(chat.sending, isFalse);
       // The user's message stays on screen so the retry has context.
@@ -68,9 +69,9 @@ void main() {
     test('a new turn clears the previous error', () {
       final chat = ChatSession();
       addTearDown(chat.dispose);
-      chat.addUserMessage('one');
-      chat.failed(StateError('nope'));
-      chat.finishSending();
+      final turn = chat.addUserMessage('one');
+      chat.failed(turn, StateError('nope'));
+      chat.finishSending(turn);
       chat.addUserMessage('two');
       expect(chat.error, isNull);
     });
@@ -80,9 +81,9 @@ void main() {
       addTearDown(chat.dispose);
       var notifications = 0;
       chat.addListener(() => notifications++);
-      chat.addUserMessage('hi');
-      chat.addReply(const ChatResult(reply: 'hello'));
-      chat.finishSending();
+      final turn = chat.addUserMessage('hi');
+      chat.addReply(turn, const ChatResult(reply: 'hello'));
+      chat.finishSending(turn);
       expect(notifications, 3);
     });
 
@@ -121,11 +122,37 @@ void main() {
       final chat = ChatSession();
       addTearDown(chat.dispose);
       chat.adoptController(controller(), 0);
-      chat.addUserMessage('hi');
-      chat.failed(StateError('boom'));
+      final turn = chat.addUserMessage('hi');
+      chat.failed(turn, StateError('boom'));
       chat.reset();
       expect(chat.isEmpty, isTrue);
       expect(chat.error, isNull);
+    });
+
+    test('reset mid-flight clears sending and orphans the turn', () {
+      final chat = ChatSession();
+      addTearDown(chat.dispose);
+      final turn = chat.addUserMessage('slow question');
+      expect(chat.sending, isTrue);
+
+      chat.reset();
+      expect(chat.sending, isFalse, reason: 'the composer must not stay stuck');
+      expect(chat.isEmpty, isTrue);
+
+      // The in-flight turn resolves after the reset: its answer belongs to a
+      // conversation the user has already ended.
+      chat.addReply(turn, const ChatResult(reply: 'too late'));
+      chat.failed(turn, StateError('also too late'));
+      chat.finishSending(turn);
+      expect(chat.isEmpty, isTrue);
+      expect(chat.error, isNull);
+
+      // A turn started after the reset still works.
+      final next = chat.addUserMessage('new question');
+      chat.addReply(next, const ChatResult(reply: 'answer'));
+      chat.finishSending(next);
+      expect(chat.entries.length, 2);
+      expect(chat.sending, isFalse);
     });
   });
 }
