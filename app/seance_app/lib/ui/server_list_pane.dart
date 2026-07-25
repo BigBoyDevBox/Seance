@@ -143,7 +143,11 @@ class _ServerListPaneState extends State<ServerListPane> {
             controller: _search,
             focusNode: _searchFocus,
             onChanged: _setQuery,
-            onSubmitted: (_) => _openFirstMatch(matches),
+            // Only while filtering: Enter in an empty field would otherwise
+            // connect to whichever server happens to be first.
+            onSubmitted: _query.isEmpty
+                ? null
+                : (_) => _openFirstMatch(matches),
             textInputAction: TextInputAction.go,
             decoration: InputDecoration(
               isDense: true,
