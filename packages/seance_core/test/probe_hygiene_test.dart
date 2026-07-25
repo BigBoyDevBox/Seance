@@ -105,6 +105,34 @@ void main() {
     });
   });
 
+  group('a disposed service stops for good', () {
+    test('a sweep in flight when dispose lands does not re-arm', () async {
+      final prober = _CountingProber();
+      final service = ProbeService(
+        prober: prober,
+        interval: const Duration(milliseconds: 10),
+      );
+      service.start([_server('a')]);
+
+      // Wait until the first sweep is actually inside the prober, so the
+      // timer has already fired and `dispose` has nothing left to cancel.
+      while (prober.probed.isEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      await service.dispose();
+      prober.release();
+
+      final afterDispose = prober.probed.length;
+      // Several intervals' worth of quiet.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(
+        prober.probed.length,
+        afterDispose,
+        reason: 'a disposed service must not keep waking up to probe',
+      );
+    });
+  });
+
   group('servers with a live session are not probed', () {
     test('they are reported online without touching the network', () async {
       final prober = _CountingProber()..release();

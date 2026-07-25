@@ -196,7 +196,12 @@ class ProbeService {
         // In the finally, not after the catch: the comment above promises the
         // schedule survives a failed sweep, and it only actually does if a
         // throw from the logging path cannot skip this line.
-        if (!_paused) _scheduleNext();
+        //
+        // Closed, not just paused: `dispose` cancels the timer, but a sweep
+        // already running by then has nothing left to cancel, and re-arming
+        // here would leave a disposed service waking every interval for the
+        // life of the process.
+        if (!_paused && !_controller.isClosed) _scheduleNext();
       }
     });
   }
