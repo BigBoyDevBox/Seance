@@ -25,7 +25,7 @@ void main() {
     _server(label: 'lab', host: '10.0.0.5', username: 'root', port: 2222),
   ];
 
-  group('serverMatchesQuery', () {
+  group('filterServers', () {
     test('an empty or whitespace query matches everything', () {
       for (final query in ['', '   ', '\t']) {
         expect(filterServers(servers, query).length, servers.length);

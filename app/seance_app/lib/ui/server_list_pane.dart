@@ -86,9 +86,13 @@ class _ServerListPaneState extends State<ServerListPane> {
           // Keep the field once a query is active even if the match count
           // drops below the threshold, or filtering would strand an
           // uneditable filter with no way to clear it.
+          // Never above the onboarding empty state: a filter box beside
+          // "No servers yet" reads as "your servers are hidden" rather than
+          // "you have none".
           final showFilter =
-              state.servers.length >= ServerListPane.filterThreshold ||
-              _query.isNotEmpty;
+              state.servers.isNotEmpty &&
+              (state.servers.length >= ServerListPane.filterThreshold ||
+                  _query.isNotEmpty);
           final Widget list;
           if (state.servers.isEmpty) {
             list = const _EmptyState();
