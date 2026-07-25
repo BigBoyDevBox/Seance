@@ -189,8 +189,12 @@ class ProbeService {
           error: error,
           stackTrace: stack,
         );
+      } finally {
+        // In the finally, not after the catch: the comment above promises the
+        // schedule survives a failed sweep, and it only actually does if a
+        // throw from the logging path cannot skip this line.
+        if (!_paused) _scheduleNext();
       }
-      if (!_paused) _scheduleNext();
     });
   }
 
