@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:seance_core/seance_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -8,13 +9,49 @@ import '../theme.dart';
 import 'app_menus.dart';
 import 'middle_ellipsis_text.dart';
 import 'server_editor.dart';
+import 'server_filter.dart';
 import 'settings_screen.dart';
 
 /// Left pane / first screen: the configured servers with a reachability dot.
 /// Tapping one opens a terminal (via [onOpen]).
-class ServerListPane extends StatelessWidget {
+class ServerListPane extends StatefulWidget {
   final void Function(ServerConfig server) onOpen;
   const ServerListPane({super.key, required this.onOpen});
+
+  /// Below this many servers the list is short enough to read at a glance and
+  /// the filter would just be chrome. Matches the Snippets pane's threshold.
+  static const int filterThreshold = 5;
+
+  @override
+  State<ServerListPane> createState() => _ServerListPaneState();
+}
+
+class _ServerListPaneState extends State<ServerListPane> {
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _setQuery(String value) => setState(() => _query = value);
+
+  void _clearQuery() {
+    _search.clear();
+    _setQuery('');
+  }
+
+  /// Enter opens the only remaining match — the fast path for "type three
+  /// letters, hit return, you're on the box".
+  void _openFirstMatch(List<ServerConfig> matches) {
+    if (matches.isEmpty) return;
+    _searchFocus.unfocus();
+    widget.onOpen(matches.first);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,15 +82,31 @@ class ServerListPane extends StatelessWidget {
       body: ListenableBuilder(
         listenable: state,
         builder: (context, _) {
-          final list = state.servers.isEmpty
-              ? const _EmptyState()
-              : _serverList(context, state);
+          final matches = filterServers(state.servers, _query);
+          // Keep the field once a query is active even if the match count
+          // drops below the threshold, or filtering would strand an
+          // uneditable filter with no way to clear it.
+          final showFilter =
+              state.servers.length >= ServerListPane.filterThreshold ||
+              _query.isNotEmpty;
+          final Widget list;
+          if (state.servers.isEmpty) {
+            list = const _EmptyState();
+          } else if (matches.isEmpty) {
+            list = _NoMatches(onClear: _clearQuery);
+          } else {
+            list = _serverList(context, state, matches);
+          }
           final update = state.updateInfo;
-          if (update == null) return list;
-          // A newer release exists: show a dismissible banner above the list.
           return Column(
             children: [
-              _UpdateBanner(info: update, onDismiss: state.dismissUpdateNotice),
+              // A newer release exists: a dismissible banner above the list.
+              if (update != null)
+                _UpdateBanner(
+                  info: update,
+                  onDismiss: state.dismissUpdateNotice,
+                ),
+              if (showFilter) _filterField(matches),
               Expanded(child: list),
             ],
           );
@@ -67,12 +120,64 @@ class ServerListPane extends StatelessWidget {
     );
   }
 
-  Widget _serverList(BuildContext context, AppState state) {
+  Widget _filterField(List<ServerConfig> matches) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Shortcuts(
+        // Escape clears rather than propagating; there is nothing else in this
+        // pane for it to dismiss.
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+        },
+        child: Actions(
+          actions: {
+            DismissIntent: CallbackAction<DismissIntent>(
+              onInvoke: (_) {
+                _clearQuery();
+                return null;
+              },
+            ),
+          },
+          child: TextField(
+            controller: _search,
+            focusNode: _searchFocus,
+            onChanged: _setQuery,
+            onSubmitted: (_) => _openFirstMatch(matches),
+            textInputAction: TextInputAction.go,
+            decoration: InputDecoration(
+              isDense: true,
+              prefixIcon: const Icon(Icons.search, size: 18),
+              hintText: 'Filter servers…',
+              helperText: _query.isEmpty
+                  ? null
+                  : '${matches.length} of ${_serverCount()} · ↵ opens the first',
+              border: const OutlineInputBorder(),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear filter',
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: _clearQuery,
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  int _serverCount() => AppScope.of(context).servers.length;
+
+  Widget _serverList(
+    BuildContext context,
+    AppState state,
+    List<ServerConfig> servers,
+  ) {
     return ListView.separated(
-      itemCount: state.servers.length,
+      itemCount: servers.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
-        final server = state.servers[i];
+        final server = servers[i];
         final reachability = state.statuses[server.id] ?? ProbeStatus.unknown;
         final tabs = state.sessionsForServer(server.id);
         return _ServerTile(
@@ -84,7 +189,7 @@ class ServerListPane extends StatelessWidget {
           tabCount: tabs.length,
           reachability: reachability,
           selected: server.id == state.activeServerId,
-          onTap: () => onOpen(server),
+          onTap: () => widget.onOpen(server),
           onNewTab: () => state.newTab(server),
           onEdit: () => _editServer(context, state, server),
           onDelete: () => _deleteServer(context, state, server),
@@ -465,6 +570,35 @@ class _ReachabilityDot extends StatelessWidget {
   }
 }
 
+/// Shown when a filter excludes every server — distinct from having no
+/// servers at all, which needs the onboarding empty state instead.
+class _NoMatches extends StatelessWidget {
+  final VoidCallback onClear;
+  const _NoMatches({required this.onClear});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off, size: 40),
+            const SizedBox(height: 12),
+            Text(
+              'No servers match',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            TextButton(onPressed: onClear, child: const Text('Clear filter')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
   @override
@@ -491,7 +625,7 @@ class _EmptyState extends StatelessWidget {
             // install (especially on a phone) needs a visible path to the
             // sync-server setup.
             OutlinedButton.icon(
-              onPressed: () => ServerListPane._openSettings(context),
+              onPressed: () => openSettings(),
               icon: const Icon(Icons.settings_outlined),
               label: const Text('Sync & settings'),
             ),
