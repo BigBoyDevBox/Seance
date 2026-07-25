@@ -123,8 +123,16 @@ class ProbeService {
         final index = next++;
         if (index >= pending.length) return;
         final server = pending[index];
-        results[server.id] =
-            await prober.probe(server.host, server.port, timeout: timeout);
+        try {
+          results[server.id] =
+              await prober.probe(server.host, server.port, timeout: timeout);
+        } catch (_) {
+          // One misbehaving host must not take the rest of the sweep with it.
+          // [unknown], not [offline]: an unexpected error is not evidence that
+          // the host is down, and claiming otherwise would be the lie this
+          // enum's third state exists to avoid.
+          results[server.id] = ProbeStatus.unknown;
+        }
       }
     }
 
@@ -159,13 +167,18 @@ class ProbeService {
     final delay = immediate ? Duration.zero : Duration(milliseconds: jitterMs);
     _timer = Timer(delay, () async {
       if (_paused) return;
-      if (!_controller.isClosed && _servers.isNotEmpty) {
-        _controller.add(
-          await probeAll(
-            _servers,
-            alreadyConnected: connectedServerIds?.call() ?? const {},
-          ),
-        );
+      try {
+        if (!_controller.isClosed && _servers.isNotEmpty) {
+          _controller.add(
+            await probeAll(
+              _servers,
+              alreadyConnected: connectedServerIds?.call() ?? const {},
+            ),
+          );
+        }
+      } catch (_) {
+        // A failed sweep must not become an unhandled async error, and must
+        // not stop the schedule: the next one is still queued below.
       }
       if (!_paused) _scheduleNext();
     });

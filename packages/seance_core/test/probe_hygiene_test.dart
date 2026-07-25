@@ -28,6 +28,23 @@ class _CountingProber implements Prober {
   }
 }
 
+/// Throws for the named hosts, mimicking a prober that does not swallow its
+/// own errors the way [TcpBannerProber] does.
+class _ThrowingProber implements Prober {
+  final Set<String> failing;
+  _ThrowingProber(this.failing);
+
+  @override
+  Future<ProbeStatus> probe(
+    String host,
+    int port, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if (failing.contains(host)) throw StateError('probe exploded');
+    return ProbeStatus.online;
+  }
+}
+
 ServerConfig _server(String id) => ServerConfig(
   id: id,
   label: id,
@@ -46,7 +63,11 @@ void main() {
 
       final servers = [for (var i = 0; i < 20; i++) _server('s$i')];
       final pending = service.probeAll(servers);
-      // Let the first wave start before releasing them.
+      // Workers run synchronously up to `await _gate.future` inside the
+      // prober, so by the next event-loop turn the whole first wave is
+      // blocked and peakInFlight reflects the real fan-out. A future change
+      // that inserts an await before the probe call would need a real gate
+      // here instead.
       await Future<void>.delayed(Duration.zero);
       expect(prober.peakInFlight, lessThanOrEqualTo(3));
 
@@ -64,6 +85,23 @@ void main() {
       final result = await service.probeAll([_server('a'), _server('b')]);
       expect(result.keys, unorderedEquals(['a', 'b']));
       expect(prober.peakInFlight, lessThanOrEqualTo(2));
+    });
+  });
+
+  group('one bad host does not take the sweep with it', () {
+    test('a throwing probe yields unknown, and the rest still complete', () async {
+      final service = ProbeService(prober: _ThrowingProber({'b.example.com'}));
+      addTearDown(service.dispose);
+      final result = await service.probeAll([
+        _server('a'),
+        _server('b'),
+        _server('c'),
+      ]);
+      expect(result.length, 3);
+      // Not `offline`: an unexpected error is not evidence the host is down.
+      expect(result['b'], ProbeStatus.unknown);
+      expect(result['a'], ProbeStatus.online);
+      expect(result['c'], ProbeStatus.online);
     });
   });
 
