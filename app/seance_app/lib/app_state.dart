@@ -908,7 +908,7 @@ class AppState extends ChangeNotifier {
       // surface long after the state object is gone.
       unawaited(
         _disposeSession(t).catchError((Object error, StackTrace stack) {
-          debugPrint('Session teardown failed: $error');
+          debugPrint('Session teardown failed: $error\n$stack');
         }),
       );
     }
