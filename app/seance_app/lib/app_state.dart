@@ -482,12 +482,18 @@ class AppState extends ChangeNotifier {
       }
       tab.retainedLocalCopies.clear();
     }
-    if (tab.session != null) {
-      await tab.session!.close(); // SshSession.close disposes the engine
-    } else {
-      await tab.engine.dispose();
+    try {
+      if (tab.session != null) {
+        await tab.session!.close(); // SshSession.close disposes the engine
+      } else {
+        await tab.engine.dispose();
+      }
+    } finally {
+      // Always released: a failed engine teardown must not also strand the
+      // notifier, or a late trace line would fire into a listener list that
+      // nothing owns any more.
+      tab.logNotifier.dispose();
     }
-    tab.logNotifier.dispose();
   }
 
   /// Seed the built-in snippets on first launch only (guarded by a persisted

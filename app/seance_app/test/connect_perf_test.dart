@@ -86,6 +86,21 @@ void main() {
       expect(text.contains('line 500'), isFalse);
     });
 
+    test('reaches into scrollback, not just the visible viewport', () {
+      final engine = feed(2000);
+      // Buffer.height is lines.length — the whole buffer, scrollback included
+      // (Buffer.viewHeight is the viewport). A 200-line request must
+      // therefore return far more than one screen.
+      final lines = engine
+          .recentText(maxLines: 200)
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .toList();
+      expect(lines.length, greaterThan(engine.terminal.viewHeight));
+      expect(lines.length, greaterThan(100));
+      expect(lines.last, 'line 1999');
+    });
+
     test('a short session returns everything it has', () {
       final engine = feed(3);
       final text = engine.recentText(maxLines: 200);
