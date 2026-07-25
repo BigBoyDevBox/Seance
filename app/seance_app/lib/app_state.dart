@@ -105,6 +105,19 @@ class TerminalSession {
   static String? _keepLast(String? reported, String? previous) =>
       (reported == null || reported.isEmpty) ? previous : reported;
 
+  /// Release what the session owns beyond its engine and SSH connection.
+  ///
+  /// The engine's own disposal already drops these listeners along with the
+  /// notifiers they are attached to, so the explicit removal is belt and
+  /// braces — it makes the ordering invariant local instead of something a
+  /// reader has to infer from `XtermTerminalEngine.dispose`. Removing a
+  /// listener from an already-disposed notifier is explicitly supported.
+  void dispose() {
+    engine.workingDirectory.removeListener(_syncMetadata);
+    engine.terminalTitle.removeListener(_syncMetadata);
+    metadata.dispose();
+  }
+
   bool get isConnected => session != null && !session!.isClosed;
 
   TerminalStatus get status {
@@ -526,7 +539,7 @@ class AppState extends ChangeNotifier {
     }
     // Only here, not in disconnect(): a disconnected tab stays in the strip and
     // keeps showing where it last was.
-    tab.metadata.dispose();
+    tab.dispose();
   }
 
   /// Seed the built-in snippets on first launch only (guarded by a persisted
