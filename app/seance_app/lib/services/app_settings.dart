@@ -183,6 +183,35 @@ class AppSettings {
   );
 }
 
+/// Recover the few fields that are expensive to lose from the raw text of an
+/// unparseable settings file.
+///
+/// [AppSettings.deviceId] matters most: it is the tiebreaker in `Lww.resolve`,
+/// so a device that comes back with a fresh id re-enters sync as a stranger and
+/// its existing records lose their authorship for conflict resolution. The sync
+/// server and username are recovered too, so re-enrolment does not start from a
+/// blank form. Nothing here is trusted beyond its shape — the values are plain
+/// strings that go straight back through the normal accessors.
+AppSettings salvageSettings(String? raw) {
+  final settings = AppSettings();
+  if (raw == null) return settings;
+  String? field(String name) => RegExp(
+    '"$name"\\s*:\\s*"([^"\\\\]*)"',
+  ).firstMatch(raw)?.group(1);
+
+  final deviceId = field('deviceId');
+  if (deviceId != null && deviceId.isNotEmpty) settings.deviceId = deviceId;
+  final syncBaseUrl = field('syncBaseUrl');
+  if (syncBaseUrl != null && syncBaseUrl.isNotEmpty) {
+    settings.syncBaseUrl = syncBaseUrl;
+  }
+  final syncUsername = field('syncUsername');
+  if (syncUsername != null && syncUsername.isNotEmpty) {
+    settings.syncUsername = syncUsername;
+  }
+  return settings;
+}
+
 Map<String, IdentityFileBookmark> _identityBookmarkMap(Object? value) {
   if (value is! Map) return {};
   final result = <String, IdentityFileBookmark>{};
@@ -223,16 +252,32 @@ Map<String, List<String>> _bookmarkMap(Object? value) {
 class SettingsStore {
   final File file;
   Future<void> _saveTail = Future<void>.value();
+
+  /// True when [load] could not parse the settings file and started from
+  /// defaults. The bad file is moved aside rather than overwritten, and the app
+  /// says so — silently resetting the sync server, the provider configuration
+  /// and the editor registry is not something the user should have to discover.
+  bool recoveredFromCorruptFile = false;
+
   SettingsStore(this.file);
 
   Future<AppSettings> load() async {
     if (!await file.exists()) return AppSettings();
+    String? raw;
     try {
-      return AppSettings.fromJson(
-        jsonDecode(await file.readAsString()) as Map<String, dynamic>,
-      );
+      raw = await file.readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('settings root is not an object');
+      }
+      return AppSettings.fromJson(decoded);
     } catch (_) {
-      return AppSettings();
+      // Every other JSON store in the app quarantines an unreadable file; this
+      // one used to overwrite it with defaults on the next save, which made the
+      // loss permanent and unrecoverable.
+      await quarantineCorruptFile(file);
+      recoveredFromCorruptFile = true;
+      return salvageSettings(raw);
     }
   }
 

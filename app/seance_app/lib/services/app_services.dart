@@ -132,6 +132,12 @@ class AppServices {
     );
   }
 
+  /// True when the settings file could not be parsed at startup and was moved
+  /// aside. The UI surfaces this once, because a silent reset of the sync
+  /// account, provider configuration and editor registry is not something the
+  /// user should be left to discover on their own.
+  bool get settingsWereRecovered => settingsStore.recoveredFromCorruptFile;
+
   Future<void> saveSettings() => settingsStore.save(settings);
 
   Future<void> saveCommandStats() => commandStatsStore.save(commandStats);
