@@ -58,7 +58,13 @@ class _ServerListPaneState extends State<ServerListPane> {
   /// Open the first match — the fast path for "type three letters, hit return,
   /// you're on the box". Deliberately works with several matches too; the
   /// helper text says which one Enter will take.
-  void _openFirstMatch(List<ServerConfig> matches) {
+  ///
+  /// Matches are recomputed here rather than captured from the build that
+  /// wired this up: typing and submitting inside one frame would otherwise act
+  /// on a list one keystroke out of date.
+  void _openFirstMatch() {
+    if (_query.isEmpty) return;
+    final matches = filterServers(AppScope.of(context).servers, _query);
     if (matches.isEmpty) return;
     _searchFocus.unfocus();
     widget.onOpen(matches.first);
@@ -159,11 +165,9 @@ class _ServerListPaneState extends State<ServerListPane> {
             controller: _search,
             focusNode: _searchFocus,
             onChanged: _setQuery,
-            // Only while filtering: Enter in an empty field would otherwise
-            // connect to whichever server happens to be first.
-            onSubmitted: _query.isEmpty
-                ? null
-                : (_) => _openFirstMatch(matches),
+            // _openFirstMatch is a no-op on an empty query, so Enter in an
+            // empty field cannot connect to whichever server is first.
+            onSubmitted: (_) => _openFirstMatch(),
             textInputAction: TextInputAction.go,
             decoration: InputDecoration(
               isDense: true,
