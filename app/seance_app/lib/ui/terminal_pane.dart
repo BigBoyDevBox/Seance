@@ -3,7 +3,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:seance_core/seance_core.dart';
 import 'package:xterm/xterm.dart';
 
 import '../app_state.dart';
@@ -577,7 +576,7 @@ class _ConnectionError extends StatelessWidget {
                 label: const Text('Retry'),
               ),
               const SizedBox(height: 12),
-              _ConnectionLogView(log: tab.log),
+              _ConnectionLogView(session: tab),
             ],
           ),
         ),
@@ -622,12 +621,21 @@ class _Disconnected extends StatelessWidget {
 
 /// A collapsible view of the raw connection transcript, with a copy button.
 class _ConnectionLogView extends StatelessWidget {
-  final SshConnectionLog log;
-  const _ConnectionLogView({required this.log});
+  final TerminalSession session;
+  const _ConnectionLogView({required this.session});
 
   @override
   Widget build(BuildContext context) {
-    final text = log.toString();
+    // Listens to the session's own log notifier, not to AppState: a handshake
+    // appends a line per packet, and routing those through the app-wide
+    // notifier rebuilt the entire tree hundreds of times per connection.
+    return ListenableBuilder(
+      listenable: session.logNotifier,
+      builder: (context, _) => _log(context, session.log.toString()),
+    );
+  }
+
+  Widget _log(BuildContext context, String text) {
     final scheme = Theme.of(context).colorScheme;
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
