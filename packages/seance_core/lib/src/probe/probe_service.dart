@@ -173,7 +173,7 @@ class ProbeService {
           _controller.add(
             await probeAll(
               _servers,
-              alreadyConnected: connectedServerIds?.call() ?? const {},
+              alreadyConnected: connectedServerIds?.call() ?? const <String>{},
             ),
           );
         }
