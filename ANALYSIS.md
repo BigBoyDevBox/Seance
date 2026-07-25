@@ -911,6 +911,16 @@ Action:
 - Publish checksums and multi-architecture images if ARM is supported.
 - Back up before schema updates, wait for readiness, and roll back failed deploys.
 - Correct docs that claim scratch/static image, every-request versioning, and ciphertext-only DB leakage.
+- **Make CI's container and Gradle pulls survivable.** Observed repeatedly on
+  2026-07-25: with several PRs open at once, `Sync server Docker image` fails
+  at `FROM debian:stable-slim` with `i/o timeout` to `registry-1.docker.io`,
+  and `Client build (android)` fails with HTTP 429 from
+  `repo.maven.apache.org` — both before any repository code is compiled, so
+  every red is a false negative that has to be diagnosed by hand. Options:
+  authenticate the Docker Hub pull (an authenticated token lifts the
+  anonymous rate limit), pull base images through a registry mirror or the
+  GitHub-hosted cache, and add a retry with backoff around the Gradle
+  dependency resolution.
 
 ## Performance And Responsiveness Backlog
 
