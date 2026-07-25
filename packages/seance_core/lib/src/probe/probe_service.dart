@@ -173,12 +173,15 @@ class ProbeService {
       if (_paused) return;
       try {
         if (!_controller.isClosed && _servers.isNotEmpty) {
-          _controller.add(
-            await probeAll(
-              _servers,
-              alreadyConnected: connectedServerIds?.call() ?? const <String>{},
-            ),
+          final statuses = await probeAll(
+            _servers,
+            alreadyConnected: connectedServerIds?.call() ?? const <String>{},
           );
+          // Re-checked after the await: a sweep can take seconds, and a
+          // `dispose` landing inside that window would make this `add` throw
+          // on a closed controller — reported below as "probe sweep failed",
+          // which is a lie about an ordinary shutdown.
+          if (!_controller.isClosed) _controller.add(statuses);
         }
       } catch (error, stack) {
         // A failed sweep must not become an unhandled async error, and must

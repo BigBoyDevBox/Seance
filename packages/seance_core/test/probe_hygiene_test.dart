@@ -120,7 +120,10 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
       await service.dispose();
+      // Completing the sweep after dispose must be uneventful: the result is
+      // dropped rather than pushed into a closed controller.
       prober.release();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
       final afterDispose = prober.probed.length;
       // Several intervals' worth of quiet.
