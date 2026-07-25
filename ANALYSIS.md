@@ -1149,8 +1149,15 @@ the sidebar's selected tab and the last active server.
 Priority: P2 (refines SOL-064)
 
 `StatusColors.online/offline/unknown` take a `BuildContext` and ignore it,
-returning fixed GitHub-dark hexes. `#3FB950` on a light surface is ≈2.1:1,
-below WCAG's 3:1 for non-text indicators. The signature is already right.
+returning fixed GitHub-dark hexes. Measured against pure white — the most
+favourable light surface there is — the green is **2.54:1**, below WCAG's 3:1
+for non-text indicators; the grey sits on the line at 3.08:1 and the red
+clears it at 3.35:1. The app's light surface is a tinted near-white, so all
+three land slightly lower again. The signature is already right; only the
+implementation needs to consult the theme brightness.
+
+The green is the one that matters most: "connected" is the state a user reads
+at a glance, and it is the least legible of the three.
 
 #### SEA-020: Tab-strip touch targets are below the platform minimum
 
