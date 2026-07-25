@@ -151,6 +151,9 @@ class _ServerListPaneState extends State<ServerListPane> {
               hintText: 'Filter servers…',
               helperText: _query.isEmpty
                   ? null
+                  // Enter is a no-op with nothing to open, so don't offer it.
+                  : matches.isEmpty
+                  ? '0 of $totalServers'
                   : '${matches.length} of $totalServers · ↵ opens the first',
               border: const OutlineInputBorder(),
               suffixIcon: _query.isEmpty
