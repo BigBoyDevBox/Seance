@@ -106,7 +106,8 @@ class _ServerListPaneState extends State<ServerListPane> {
                   info: update,
                   onDismiss: state.dismissUpdateNotice,
                 ),
-              if (showFilter) _filterField(matches),
+              if (showFilter)
+                _filterField(matches, state.servers.length),
               Expanded(child: list),
             ],
           );
@@ -120,7 +121,7 @@ class _ServerListPaneState extends State<ServerListPane> {
     );
   }
 
-  Widget _filterField(List<ServerConfig> matches) {
+  Widget _filterField(List<ServerConfig> matches, int totalServers) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: Shortcuts(
@@ -150,7 +151,7 @@ class _ServerListPaneState extends State<ServerListPane> {
               hintText: 'Filter servers…',
               helperText: _query.isEmpty
                   ? null
-                  : '${matches.length} of ${_serverCount()} · ↵ opens the first',
+                  : '${matches.length} of $totalServers · ↵ opens the first',
               border: const OutlineInputBorder(),
               suffixIcon: _query.isEmpty
                   ? null
@@ -165,8 +166,6 @@ class _ServerListPaneState extends State<ServerListPane> {
       ),
     );
   }
-
-  int _serverCount() => AppScope.of(context).servers.length;
 
   Widget _serverList(
     BuildContext context,
