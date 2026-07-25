@@ -489,9 +489,11 @@ class AppState extends ChangeNotifier {
         await tab.engine.dispose();
       }
     } finally {
-      // Always released: a failed engine teardown must not also strand the
-      // notifier, or a late trace line would fire into a listener list that
-      // nothing owns any more.
+      // Sever the log's callback before releasing the notifier it points at: a
+      // trace line arriving during (or after) a failed teardown would otherwise
+      // call notifyListeners on a disposed ChangeNotifier, which asserts.
+      // Freezing also stops the transcript growing while we tear down.
+      tab.log.freeze();
       tab.logNotifier.dispose();
     }
   }

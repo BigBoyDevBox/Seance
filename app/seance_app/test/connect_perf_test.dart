@@ -61,6 +61,25 @@ void main() {
       }
       expect(logRepaints, 1);
     });
+
+    test('freezing severs the callback before the notifier goes away', () {
+      final engine = XtermTerminalEngine();
+      addTearDown(engine.dispose);
+      final session = TerminalSession(
+        id: 'a',
+        serverId: 'server',
+        config: _config(),
+        engine: engine,
+      );
+
+      // What _disposeSession does, in order.
+      session.log.freeze();
+      session.logNotifier.dispose();
+
+      // A late trace line from a transport still tearing down must not reach
+      // the disposed notifier.
+      expect(() => session.log.add('late packet'), returnsNormally);
+    });
   });
 
   group('recentText reads only the tail of the scrollback', () {
