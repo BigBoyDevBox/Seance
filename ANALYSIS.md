@@ -1158,6 +1158,18 @@ on the right, both grey when idle. The distinction is deliberate and documented
 but reads as a rendering bug. A single composed indicator — filled for the
 session, ring for reachability — would say the same thing in one glyph.
 
+#### SEA-039: A one-shot toast is a thin channel for a sync-identity reset
+
+Priority: P3
+
+PR #38 tells the user once, with a ten-second toast, that their settings
+file was unreadable and reset — and the flag is consumed on the launch that
+finds it, because the salvage is persisted in the same step. A user looking
+elsewhere for ten seconds never learns that their `deviceId` may have changed.
+
+Action: keep the notice until acknowledged — a dismissible banner, or a marker
+in Settings ▸ Sync — rather than a transient toast.
+
 ### Missing features
 
 #### SEA-023: No scrollback search
