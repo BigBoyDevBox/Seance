@@ -11,6 +11,7 @@ import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
 import 'services/remote_files_controller.dart';
 import 'services/xterm_engine.dart';
+import 'ui/terminal_appearance.dart';
 
 /// Connection state of a server's terminal, mirrored by the status dot in the
 /// server list (green / grey / red, with a spinner while connecting).
@@ -730,6 +731,28 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  // --- Terminal appearance ---
+
+  /// Change the terminal font size by [delta] points (the ⌘+ / ⌘− shortcuts),
+  /// or reset it to the default when [delta] is null (⌘0). Clamped to the
+  /// supported range; a no-op change neither notifies nor writes to disk.
+  Future<void> zoomTerminal(double? delta) async {
+    final settings = services.settings;
+    final next = clampTerminalFontSize(
+      delta == null
+          ? kDefaultTerminalFontSize
+          : settings.terminalFontSize + delta,
+    );
+    if (next == settings.terminalFontSize) return;
+    settings.terminalFontSize = next;
+    notifyListeners();
+    await services.saveSettings();
+  }
+
+  /// Repaint live terminals after the appearance settings changed in place
+  /// (the settings screen owns the write; this only refreshes the views).
+  void terminalAppearanceChanged() => notifyListeners();
 
   /// Dismiss the update affordance for this session (a fresh launch re-checks).
   void dismissUpdateNotice() {
