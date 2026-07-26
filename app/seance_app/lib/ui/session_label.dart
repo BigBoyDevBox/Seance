@@ -130,11 +130,17 @@ List<String> disambiguateTabLabels(List<String> labels) {
 String sessionTabTooltip({
   required int ordinal,
   required String target,
+  String? customName,
   String? workingDirectory,
   String? terminalTitle,
   String? runningCommand,
 }) {
   final lines = <String>['Session $ordinal · $target'];
+  // First, and in full: the chip truncates a long name, and this is the only
+  // other place it is shown — so the untruncated text has to be reachable
+  // here or it is not reachable at all.
+  final custom = customName == null ? '' : sanitizeRemoteLabel(customName);
+  if (custom.isNotEmpty) lines.add(custom);
   final command = runningCommand == null
       ? ''
       : sanitizeRemoteLabel(runningCommand);

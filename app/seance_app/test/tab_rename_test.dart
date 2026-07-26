@@ -108,6 +108,17 @@ void main() {
     expect(replacement.metadata.value.runningCommand, isNull);
   });
 
+  test('the tooltip carries a name too long for the chip', () {
+    const name = 'production database migration';
+    // The chip truncates it; the tooltip is the only other place it appears,
+    // so the full text has to survive here.
+    expect(sessionTabLabel(ordinal: 1, customName: name), isNot(contains('migration')));
+    expect(
+      sessionTabTooltip(ordinal: 1, target: 'a@b:22', customName: name),
+      contains(name),
+    );
+  });
+
   group('a named tab still disambiguates', () {
     test('two tabs named the same still get ordinals', () {
       expect(disambiguateTabLabels(['deploy', 'deploy']), [

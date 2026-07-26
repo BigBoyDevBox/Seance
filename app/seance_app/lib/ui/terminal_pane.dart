@@ -456,6 +456,7 @@ class _TabChip extends StatelessWidget {
             sessionTabTooltip(
               ordinal: ordinal,
               target: '${config.username}@${config.host}:${config.port}',
+              customName: session.customName.value,
               workingDirectory: metadata.workingDirectory,
               terminalTitle: metadata.terminalTitle,
               runningCommand: metadata.runningCommand,
@@ -513,6 +514,7 @@ class _TabChip extends StatelessWidget {
             ordinal: ordinal,
             target:
                 '${config.username}@${config.host}:${config.port}',
+            customName: session.customName.value,
             workingDirectory: metadata.workingDirectory,
             terminalTitle: metadata.terminalTitle,
             runningCommand: metadata.runningCommand,
