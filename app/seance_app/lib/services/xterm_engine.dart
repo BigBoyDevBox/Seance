@@ -343,10 +343,27 @@ class XtermTerminalEngine implements TerminalEngine {
 
   /// Rendered scrollback text (no escape codes) for LLM context — the last
   /// [maxLines] lines. Uses xterm's own buffer so it matches what the user sees.
+  ///
+  /// Reads only the requested range. `getText()` with no argument materializes
+  /// the *entire* buffer — up to `maxLines: 10000` rows of full-width cells —
+  /// into one string, which the old implementation then split into a
+  /// ten-thousand-element list to keep the last two hundred entries. That ran
+  /// on every assistant turn and every ⌘K, and cost megabytes of allocation on
+  /// a long-lived session.
   String recentText({int maxLines = 200}) {
-    final all = terminal.buffer.getText().split('\n');
-    final start = all.length > maxLines ? all.length - maxLines : 0;
-    return all.sublist(start).join('\n').trimRight();
+    final buffer = terminal.buffer;
+    final height = buffer.height;
+    final viewWidth = terminal.viewWidth;
+    if (height <= 0 || maxLines <= 0 || viewWidth <= 0) return '';
+    final start = height > maxLines ? height - maxLines : 0;
+    return buffer
+        .getText(
+          BufferRangeLine(
+            CellOffset(0, start),
+            CellOffset(viewWidth - 1, height - 1),
+          ),
+        )
+        .trimRight();
   }
 
   bool _disposed = false;
