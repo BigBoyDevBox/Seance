@@ -76,6 +76,7 @@ class TerminalPane extends StatelessWidget {
                   onClose: (id) => _closeTab(context, state, id),
                   onNewTab: () => state.newTab(active.config),
                   onGenerateCommand: () => openCommandGenerator(state),
+                  onRename: state.renameSession,
                 ),
               Expanded(child: _body(state)),
               if (active != null) SessionStatusBar(session: active),
@@ -207,6 +208,10 @@ class TerminalTabStrip extends StatelessWidget {
   final VoidCallback onNewTab;
   final VoidCallback onGenerateCommand;
 
+  /// Called with a tab's id and its new name, or null to clear it back to
+  /// automatic naming. Optional so the strip can be built without one.
+  final void Function(String sessionId, String? name)? onRename;
+
   const TerminalTabStrip({
     super.key,
     required this.tabs,
@@ -215,6 +220,7 @@ class TerminalTabStrip extends StatelessWidget {
     required this.onClose,
     required this.onNewTab,
     required this.onGenerateCommand,
+    this.onRename,
   });
 
   @override
@@ -231,14 +237,14 @@ class TerminalTabStrip extends StatelessWidget {
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              // One listenable over every tab's metadata, not one per chip: a
-              // name change on one tab can add or remove another tab's
-              // disambiguating suffix, so labels are computed across the
-              // strip. Still scoped to this server's tabs — nothing here
+              // One listenable over every tab's name sources, not one per
+              // chip: a name change on one tab can add or remove another
+              // tab's disambiguating suffix, so labels are computed across
+              // the strip. Still scoped to this server's tabs — nothing here
               // repaints the rest of the app.
               child: ListenableBuilder(
                 listenable: Listenable.merge([
-                  for (final tab in tabs) tab.metadata,
+                  for (final tab in tabs) ...[tab.metadata, tab.customName],
                 ]),
                 builder: (context, _) {
                   final labels = disambiguateTabLabels([
@@ -247,6 +253,7 @@ class TerminalTabStrip extends StatelessWidget {
                         // 1-based ordinal within the server, used only as the
                         // fallback name when the shell reports nothing.
                         ordinal: i + 1,
+                        customName: tabs[i].customName.value,
                         workingDirectory:
                             tabs[i].metadata.value.workingDirectory,
                         terminalTitle: tabs[i].metadata.value.terminalTitle,
@@ -263,6 +270,9 @@ class TerminalTabStrip extends StatelessWidget {
                           selected: tabs[i].id == activeSessionId,
                           onTap: () => onFocus(tabs[i].id),
                           onClose: () => onClose(tabs[i].id),
+                          onRename: onRename == null
+                              ? null
+                              : () => _rename(context, tabs[i]),
                         ),
                     ],
                   );
@@ -298,6 +308,91 @@ class TerminalTabStrip extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _rename(BuildContext context, TerminalSession session) async {
+    final name = await showTabRenameDialog(context, session);
+    // `null` is "cancelled"; the dialog reports a clear as an empty string,
+    // which renameSession turns back into automatic naming.
+    if (name == null) return;
+    onRename?.call(session.id, name.isEmpty ? null : name);
+  }
+}
+
+/// Ask for a tab's name. Returns the new name, `''` to clear it back to
+/// automatic naming, or null if the user cancelled.
+///
+/// A dialog rather than in-place editing in the chip: it is the same
+/// interaction on a phone and a desktop, and the chip is 38 px of chrome with
+/// a close button in it — not a comfortable text field.
+Future<String?> showTabRenameDialog(
+  BuildContext context,
+  TerminalSession session,
+) => showDialog<String>(
+  context: context,
+  builder: (_) => _RenameTabDialog(currentName: session.customName.value),
+);
+
+/// Stateful so the [TextEditingController] lives exactly as long as the
+/// dialog's element does. Disposing it when the `showDialog` future completes
+/// is too early: `Navigator.pop` completes that future immediately, while the
+/// route is still building through its dismissal animation.
+class _RenameTabDialog extends StatefulWidget {
+  final String? currentName;
+  const _RenameTabDialog({required this.currentName});
+
+  @override
+  State<_RenameTabDialog> createState() => _RenameTabDialogState();
+}
+
+class _RenameTabDialogState extends State<_RenameTabDialog> {
+  // `late` matters: the initializer reads `widget`, which the framework only
+  // wires up after construction, so this must not be evaluated eagerly.
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.currentName ?? '',
+  )..selection = TextSelection(
+    baseOffset: 0,
+    extentOffset: (widget.currentName ?? '').length,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename tab'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (value) => Navigator.pop(context, value),
+        decoration: const InputDecoration(
+          labelText: 'Tab name',
+          hintText: 'logs, deploy, …',
+          helperText: 'Leave empty to follow the shell again',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        // Only worth offering when there is a name to remove.
+        if (widget.currentName != null)
+          TextButton(
+            onPressed: () => Navigator.pop(context, ''),
+            child: const Text('Reset'),
+          ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: const Text('Rename'),
+        ),
+      ],
+    );
+  }
 }
 
 /// One tab in the strip. Its [label] is computed by the strip across all
@@ -311,6 +406,9 @@ class _TabChip extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onClose;
 
+  /// Open the rename prompt, or null when renaming isn't wired up.
+  final VoidCallback? onRename;
+
   const _TabChip({
     required this.ordinal,
     required this.label,
@@ -318,7 +416,65 @@ class _TabChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onClose,
+    this.onRename,
   });
+
+  /// Where to anchor a menu opened by long-press, which — unlike a right-click
+  /// — carries no position of its own.
+  Offset _chipCenter(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return Offset.zero;
+    return box.localToGlobal(box.size.center(Offset.zero));
+  }
+
+  Future<void> _showMenu(BuildContext context, Offset globalPosition) async {
+    // Positioning needs the overlay's box; give up rather than crash if the
+    // chip is being torn down as the menu opens.
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    final metadata = session.metadata.value;
+    final config = session.config;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        overlay.size.width - globalPosition.dx,
+        overlay.size.height - globalPosition.dy,
+      ),
+      items: [
+        // The tooltip's content, as a menu header: on touch there is no hover
+        // to show it any other way, and this is the gesture that used to.
+        PopupMenuItem(
+          enabled: false,
+          // height: 0 is the idiom for "size to the child": the default
+          // minimum would leave this multi-line header boxed in a single
+          // row's height.
+          height: 0,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Text(
+            sessionTabTooltip(
+              ordinal: ordinal,
+              target: '${config.username}@${config.host}:${config.port}',
+              customName: session.customName.value,
+              workingDirectory: metadata.workingDirectory,
+              terminalTitle: metadata.terminalTitle,
+              runningCommand: metadata.runningCommand,
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'rename', child: Text('Rename tab…')),
+        const PopupMenuItem(value: 'close', child: Text('Close tab')),
+      ],
+    );
+    if (choice == 'rename') {
+      onRename?.call();
+    } else if (choice == 'close') {
+      onClose();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -326,13 +482,39 @@ class _TabChip extends StatelessWidget {
     final config = session.config;
     final metadata = session.metadata.value;
     // Middle-click closes, matching browser/terminal tab conventions.
+    //
+    // Rename is reached through a context menu — right-click on a desktop,
+    // long-press on touch — rather than through a tab gesture directly.
+    // Both alternatives were tried and measured:
+    //
+    //  * `onLongPress` never fired: [Tooltip] registers its own long-press
+    //    recognizer and wins the arena, so the tip appeared and rename did
+    //    not.
+    //  * `onDoubleTap` worked, but registering it made the InkWell's `onTap`
+    //    wait out the double-tap timeout before resolving — a ~300 ms delay
+    //    on *every tab switch* to pay for a rare action.
+    //
+    // A menu also gives the action a name, which no bare gesture does.
     return GestureDetector(
       onTertiaryTapUp: (_) => onClose(),
+      onSecondaryTapUp: onRename == null
+          ? null
+          : (details) => _showMenu(context, details.globalPosition),
+      onLongPress: onRename == null
+          ? null
+          : () => _showMenu(context, _chipCenter(context)),
       child: Tooltip(
+          // No gesture trigger, so the long-press above reaches this widget.
+          // Hover is unaffected — it is handled separately from the trigger
+          // mode — so a desktop still gets the tip by pointing at the tab.
+          // Touch keeps the same information: the menu opened by long-press
+          // carries it as the header.
+          triggerMode: TooltipTriggerMode.manual,
           message: sessionTabTooltip(
             ordinal: ordinal,
             target:
                 '${config.username}@${config.host}:${config.port}',
+            customName: session.customName.value,
             workingDirectory: metadata.workingDirectory,
             terminalTitle: metadata.terminalTitle,
             runningCommand: metadata.runningCommand,
