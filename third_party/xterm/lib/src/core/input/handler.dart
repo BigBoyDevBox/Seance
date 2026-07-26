@@ -119,7 +119,12 @@ class KeytabInputHandler implements TerminalInputHandler {
       appCursorKeys: event.state.appKeypadMode,
       appKeyPad: event.state.appKeypadMode,
       appScreen: event.altBuffer,
-      macos: event.platform == TerminalTargetPlatform.macos,
+      // [seance fork] iOS counts as Mac for keytab records: an iPad hardware
+      // keyboard is an Apple keyboard, so +Mac records (Option-Arrow word
+      // jumps as ESC b/f) apply there too — consistent with the Apple gates
+      // in AltInputHandler and charInput.
+      macos: event.platform == TerminalTargetPlatform.macos ||
+          event.platform == TerminalTargetPlatform.ios,
     );
 
     if (record == null) {
@@ -192,7 +197,12 @@ class AltInputHandler implements TerminalInputHandler {
       return null;
     }
 
-    if (event.platform == TerminalTargetPlatform.macos) {
+    // [seance fork] Also iOS, not just macOS: iPad hardware keyboards use
+    // Option to compose characters exactly like a Mac (Option-N is the dead
+    // tilde on Swiss/German layouts), so the key event must fall through
+    // unhandled for the IME to see it.
+    if (event.platform == TerminalTargetPlatform.macos ||
+        event.platform == TerminalTargetPlatform.ios) {
       return null;
     }
 
@@ -200,7 +210,10 @@ class AltInputHandler implements TerminalInputHandler {
 
     if (key.index >= TerminalKey.keyA.index &&
         key.index <= TerminalKey.keyZ.index) {
-      final charCode = key.index - TerminalKey.keyA.index + 65;
+      // [seance fork] Lowercase, matching xterm/Konsole: alt+n is ESC n.
+      // Upstream emitted the uppercase letter (ESC N), which remote readline
+      // binds differently (M-n is history search; M-N is unbound).
+      final charCode = key.index - TerminalKey.keyA.index + 0x61;
       final input = [0x1b, charCode];
       return String.fromCharCodes(input);
     }

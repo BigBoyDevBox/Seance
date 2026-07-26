@@ -11,6 +11,15 @@ typedef GestureCountedTapDownCallback = void Function(
   int tapCount,
 );
 
+/// [seance fork] Signature for drag-start callbacks that carry the tap count
+/// of the press the drag grew out of, so a drag that begins from the second
+/// or third click of a multi-click sequence can extend by words or lines
+/// instead of restarting a character selection.
+typedef GestureCountedDragStartCallback = void Function(
+  DragStartDetails details,
+  int tapCount,
+);
+
 class TerminalGestureDetector extends StatefulWidget {
   const TerminalGestureDetector({
     super.key,
@@ -72,7 +81,9 @@ class TerminalGestureDetector extends StatefulWidget {
 
   final GestureLongPressCancelCallback? onLongPressCancel;
 
-  final GestureDragStartCallback? onDragStart;
+  /// [seance fork] Carries the tap count of the originating press — see
+  /// [GestureCountedDragStartCallback].
+  final GestureCountedDragStartCallback? onDragStart;
 
   final GestureDragUpdateCallback? onDragUpdate;
 
@@ -106,9 +117,45 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
 
   int _tapCount = 0;
 
-  void _handleTapDown(TapDownDetails details) {
+  /// [seance fork] The tap count of the press currently on the ground,
+  /// recorded at the RAW pointer layer. The recognizer-driven [_tapCount]
+  /// cannot serve the drag path: `TapGestureRecognizer` reports a tap-down
+  /// only at its 100ms deadline (or on acceptance), so a press that starts
+  /// moving earlier never registers — and by the time the pan recognizer
+  /// wins the arena, the tap's rejection has already reset the sequence.
+  /// This value is written on every pointer-down, before any recognizer
+  /// resolves, and survives the tap's cancellation.
+  int _pressTapCount = 1;
+
+  /// [seance fork] Pointers whose press advanced the chain, by pointer id.
+  /// Two jobs: a second simultaneous pointer (multi-touch) resets the chain —
+  /// a chord is not a double-tap — and an up is only processed for a down
+  /// this layer counted, so an ignored press (a right-click) stays invisible
+  /// on release too.
+  final Set<int> _chainPointers = {};
+
+  /// [seance fork] Raw pointer-down: advance the multi-click chain and
+  /// remember the count for a drag that may grow out of this press. Counting
+  /// here (not in [_handleTapDown]) keeps one source of truth that is
+  /// correct for taps, deadline-fired holds, and immediate drags alike.
+  void _handlePointerDown(PointerDownEvent event) {
+    // Non-primary mouse buttons never reached the old recognizer-based
+    // counter (TapGestureRecognizer routes them to the secondary/tertiary
+    // callbacks), so a right-click between two left-clicks must neither
+    // advance nor reset the chain here either.
+    if (event.kind == PointerDeviceKind.mouse &&
+        event.buttons != kPrimaryButton) {
+      return;
+    }
+    _chainPointers.add(event.pointer);
+    if (_chainPointers.length > 1) {
+      _tapSequenceTimer?.cancel();
+      _tapSequenceTimeout();
+      _pressTapCount = 1;
+      return;
+    }
     if (_tapSequenceTimer != null &&
-        _isWithinDoubleTapTolerance(details.globalPosition) &&
+        _isWithinDoubleTapTolerance(event.position) &&
         _tapCount < 3) {
       _tapCount += 1;
     } else {
@@ -116,8 +163,27 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
     }
     _tapSequenceTimer?.cancel();
     _tapSequenceTimer = null;
-    _lastTapOffset = details.globalPosition;
+    _lastTapOffset = event.position;
+    _pressTapCount = _tapCount;
+  }
 
+  void _handlePointerUp(PointerUpEvent event) {
+    if (!_chainPointers.remove(event.pointer)) return;
+    // Re-arm the window from every counted pointer-up so the next click can
+    // continue the sequence (up₁→down₂ for doubles, up₂→down₃ for triples).
+    // A drag's release also lands here, but its cancellation already cleared
+    // the chain, so the next click starts fresh at 1.
+    _tapSequenceTimer?.cancel();
+    _tapSequenceTimer = Timer(_multiClickWindow, _tapSequenceTimeout);
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (!_chainPointers.remove(event.pointer)) return;
+    _tapSequenceTimer?.cancel();
+    _tapSequenceTimeout();
+  }
+
+  void _handleTapDown(TapDownDetails details) {
     widget.onTapDown?.call(details, _tapCount);
 
     if (_tapCount == 2) {
@@ -134,10 +200,6 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
     if (_tapCount == 1) {
       widget.onSingleTapUp?.call(details);
     }
-    // Re-arm the window from every tap-up so the next click can continue the
-    // sequence (up₁→down₂ for doubles, up₂→down₃ for triples).
-    _tapSequenceTimer?.cancel();
-    _tapSequenceTimer = Timer(_multiClickWindow, _tapSequenceTimeout);
   }
 
   void _tapSequenceTimeout() {
@@ -146,12 +208,19 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
     _tapCount = 0;
   }
 
-  /// [seance fork] The tap lost the arena (the pointer became a drag). Reset
-  /// the sequence so the drag's press — which already fired _handleTapDown at
-  /// the deadline — can't count toward a later click's double/triple.
+  /// [seance fork] The tap lost the arena (the pointer became a drag, or a
+  /// long-press). Reset the sequence so the drag's press can't count toward
+  /// a later click's double/triple. [_pressTapCount] is deliberately NOT
+  /// reset: arena ordering rejects the tap before accepting the pan, and the
+  /// drag that fires right after this needs the count of the press it grew
+  /// out of.
   void _handleTapCancel() {
     _tapSequenceTimer?.cancel();
     _tapSequenceTimeout();
+  }
+
+  void _handleDragStart(DragStartDetails details) {
+    widget.onDragStart?.call(details, _pressTapCount);
   }
 
   bool _isWithinDoubleTapTolerance(Offset secondTapOffset) {
@@ -216,17 +285,25 @@ class _TerminalGestureDetectorState extends State<TerminalGestureDetector> {
       (PanGestureRecognizer instance) {
         instance
           ..dragStartBehavior = DragStartBehavior.down
-          ..onStart = widget.onDragStart
+          ..onStart = _handleDragStart
           ..onUpdate = widget.onDragUpdate
           ..onEnd = widget.onDragEnd
           ..onCancel = widget.onDragCancel;
       },
     );
 
-    return RawGestureDetector(
-      gestures: gestures,
-      excludeFromSemantics: true,
-      child: widget.child,
+    return Listener(
+      // The raw layer sees every press before any recognizer resolves —
+      // see [_handlePointerDown].
+      onPointerDown: _handlePointerDown,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
+      behavior: HitTestBehavior.translucent,
+      child: RawGestureDetector(
+        gestures: gestures,
+        excludeFromSemantics: true,
+        child: widget.child,
+      ),
     );
   }
 }

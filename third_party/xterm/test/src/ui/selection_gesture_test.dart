@@ -411,4 +411,297 @@ void main() {
           reason: 'insert()-path evictions must migrate anchors like push()');
     });
   });
+
+  group('multi-click drag', () {
+    /// Press at [origin] as the Nth click of a chain ([precedingClicks]
+    /// full clicks first), keep the button down, and return the live
+    /// gesture so the caller can drag.
+    Future<TestGesture> chainedPress(
+      WidgetTester tester,
+      Offset origin, {
+      required int precedingClicks,
+      Duration hold = const Duration(milliseconds: 150),
+    }) async {
+      for (var i = 0; i < precedingClicks; i++) {
+        await tester.tapAt(origin, kind: PointerDeviceKind.mouse);
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      final gesture = await tester.startGesture(
+        origin,
+        kind: PointerDeviceKind.mouse,
+      );
+      // Hold past the tap recognizer's deadline (100ms) so the deferred
+      // tap-down — and with it onDouble/TripleTapDown — fires before the
+      // drag begins, like an unhurried double-click-drag does.
+      await tester.pump(hold);
+      return gesture;
+    }
+
+    Future<void> release(WidgetTester tester, TestGesture gesture) async {
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 600));
+    }
+
+    testWidgets('double-click-drag extends the selection by words',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie delta');
+      await tester.pump();
+
+      // Click, then press-and-hold on "bravo" (click 2), then drag into
+      // the middle of "charlie".
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 7, 0), // inside "bravo"
+        precedingClicks: 1,
+      );
+      await gesture.moveTo(cellCenter(tester, 15, 0)); // inside "charlie"
+      await tester.pump();
+      await release(tester, gesture);
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(
+        terminal.buffer.getText(selection!).trim(),
+        'bravo charlie',
+        reason: 'both endpoints must snap to word boundaries: the origin '
+            'word stays whole and the word under the pointer joins whole',
+      );
+    });
+
+    testWidgets(
+        'a drag that starts inside the tap deadline still extends by words',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie delta');
+      await tester.pump();
+
+      // No hold at all: the pointer starts moving before the 100ms tap
+      // deadline, so onDoubleTapDown never fires and the initial word
+      // selection must be made by the drag itself.
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 7, 0), // inside "bravo"
+        precedingClicks: 1,
+        hold: Duration.zero,
+      );
+      await gesture.moveTo(cellCenter(tester, 15, 0)); // inside "charlie"
+      await tester.pump();
+      await release(tester, gesture);
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(terminal.buffer.getText(selection!).trim(), 'bravo charlie');
+    });
+
+    testWidgets('double-click-drag backward keeps the origin word whole',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie delta');
+      await tester.pump();
+
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 15, 0), // inside "charlie"
+        precedingClicks: 1,
+      );
+      await gesture.moveTo(cellCenter(tester, 2, 0)); // inside "alpha"
+      await tester.pump();
+      await release(tester, gesture);
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(terminal.buffer.getText(selection!).trim(), 'alpha bravo charlie');
+    });
+
+    testWidgets('triple-click-drag extends the selection by whole lines',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('first line\r\nsecond line\r\nthird line\r\nfourth');
+      await tester.pump();
+
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 4, 1), // inside "second line"
+        precedingClicks: 2,
+      );
+      await gesture.moveTo(cellCenter(tester, 3, 2)); // inside "third line"
+      await tester.pump();
+      await release(tester, gesture);
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(selection!.begin.x, 0, reason: 'line drags span full lines');
+      final text = terminal.buffer.getText(selection);
+      expect(text, contains('second line'));
+      expect(text, contains('third line'));
+      expect(text, isNot(contains('first')));
+      expect(text, isNot(contains('fourth')));
+    });
+
+    testWidgets('a plain drag still selects by characters', (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie');
+      await tester.pump();
+
+      final gesture = await tester.startGesture(
+        cellCenter(tester, 2, 0), // inside "alpha"
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      await gesture.moveTo(cellCenter(tester, 8, 0)); // inside "bravo"
+      await tester.pump();
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      final text = terminal.buffer.getText(selection!);
+      expect(
+        text,
+        isNot(contains('alpha')),
+        reason: 'a single-click drag must NOT snap to word boundaries — it '
+            'starts mid-word at the pressed cell',
+      );
+      expect(text, startsWith('pha'));
+    });
+
+    testWidgets('a right-click between clicks does not advance the chain',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie');
+      await tester.pump();
+
+      final origin = cellCenter(tester, 7, 0); // inside "bravo"
+      // Left click, right click, left click — the old recognizer-based
+      // counter never saw secondary buttons, so the raw layer must not
+      // count them either: the second LEFT click is a double (word select),
+      // not a triple (line select).
+      await tester.tapAt(origin, kind: PointerDeviceKind.mouse);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(
+        origin,
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(origin, kind: PointerDeviceKind.mouse);
+      await tester.pump(const Duration(milliseconds: 600));
+
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(
+        terminal.buffer.getText(selection!).trim(),
+        'bravo',
+        reason: 'left-right-left must read as a double-click (word), '
+            'not a triple-click (line)',
+      );
+    });
+
+    testWidgets('a click after a double-click-drag starts a fresh selection',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo charlie delta');
+      await tester.pump();
+
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 7, 0),
+        precedingClicks: 1,
+      );
+      await gesture.moveTo(cellCenter(tester, 15, 0));
+      await tester.pump();
+      await release(tester, gesture);
+
+      // The next click must not chain onto the drag's presses — it is a
+      // plain single click, which clears the selection.
+      await tester.tapAt(cellCenter(tester, 2, 0), kind: PointerDeviceKind.mouse);
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(controller.selection, isNull);
+    });
+    testWidgets('double-click-drag from empty space falls back to characters',
+        (tester) async {
+      final terminal = Terminal();
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      terminal.write('alpha bravo');
+      await tester.pump();
+
+      // Origin: the void well past the end of the text, where there is no
+      // word boundary at all. The drag must degrade to a character
+      // selection, not go inert for the whole gesture.
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 30, 0),
+        precedingClicks: 1,
+      );
+      await gesture.moveTo(cellCenter(tester, 8, 0)); // into "bravo"
+      await tester.pump();
+      await release(tester, gesture);
+
+      final selection = controller.selection;
+      expect(selection, isNotNull,
+          reason: 'a wordless origin must not leave the drag inert');
+      expect(terminal.buffer.getText(selection!), contains('avo'));
+    });
+
+    testWidgets('a clear (CSI 3J) mid-drag does not break the selection',
+        (tester) async {
+      final terminal = Terminal(maxLines: 200);
+      final controller = TerminalController();
+      await pumpTerminal(tester, terminal, controller);
+      for (var i = 0; i < 40; i++) {
+        terminal.write('scrollback line $i\r\n');
+      }
+      terminal.write('alpha bravo charlie');
+      await tester.pump();
+
+      // Drag on the last buffer row: its pre-fix stale index (40 in a
+      // viewport-sized list) is out of range, so the failure is a hard
+      // RangeError, not just a silently shifted selection.
+      final lastRow = terminal.buffer.lines.length - 1;
+      final gesture = await chainedPress(
+        tester,
+        cellCenter(tester, 1, lastRow), // inside "alpha"
+        precedingClicks: 1,
+      );
+      await gesture.moveTo(cellCenter(tester, 8, lastRow)); // into "bravo"
+      await tester.pump();
+
+      // The remote runs `clear`: CSI 3J trims the whole scrollback out from
+      // under the live drag. Anchors must migrate, surviving lines must keep
+      // correct indices, and the drag must keep tracking its text.
+      terminal.write('\x1b[3J');
+      await tester.pump();
+
+      final newLastRow = terminal.buffer.lines.length - 1;
+      await gesture.moveTo(cellCenter(tester, 15, newLastRow)); // "charlie"
+      await tester.pump();
+      await release(tester, gesture);
+
+      expect(tester.takeException(), isNull,
+          reason: 'extending a drag across a scrollback trim must not throw');
+      final selection = controller.selection;
+      expect(selection, isNotNull);
+      expect(
+        terminal.buffer.getText(selection!).trim(),
+        'alpha bravo charlie',
+        reason: 'the drag must stay glued to its row across the trim',
+      );
+    });
+  });
 }

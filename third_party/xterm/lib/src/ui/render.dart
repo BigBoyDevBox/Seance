@@ -380,22 +380,53 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     );
   }
 
-  /// [seance fork] Selects the full logical line at pixel [from], following
-  /// soft-wrap continuations in both directions — the triple-click gesture.
-  void selectLine(Offset from) {
+  /// [seance fork] The full logical line containing buffer row [row],
+  /// following soft-wrap continuations in both directions. Returns the
+  /// (firstRow, lastRow) pair.
+  (int, int) _logicalLineRows(int row) {
     final lines = _terminal.buffer.lines;
-    final offset = getCellOffset(from);
-    var first = offset.y;
+    var first = row;
     while (first > 0 && lines[first].isWrapped) {
       first--;
     }
-    var last = offset.y;
+    var last = row;
     while (last + 1 < lines.length && lines[last + 1].isWrapped) {
       last++;
     }
+    return (first, last);
+  }
+
+  /// [seance fork] Selects the full logical line at pixel [from], following
+  /// soft-wrap continuations in both directions — the triple-click gesture.
+  void selectLine(Offset from) {
+    final (first, last) = _logicalLineRows(getCellOffset(from).y);
     _controller.setSelection(
       _terminal.buffer.createAnchor(0, first),
       _terminal.buffer.createAnchor(_terminal.viewWidth, last),
+      mode: SelectionMode.line,
+    );
+  }
+
+  /// [seance fork] Extends a line selection whose origin logical line is
+  /// pinned by [lineBegin]/[lineEnd] (anchors captured at gesture start) to
+  /// cover the logical line under pixel [to] — the triple-click-drag gesture.
+  /// Same anchoring rationale as [selectCharactersTo].
+  void selectLineTo(CellAnchor lineBegin, CellAnchor lineEnd, Offset to) {
+    // Same ownership rationale as [selectCharactersTo].
+    if (!_terminal.buffer.ownsAnchor(lineBegin) ||
+        !_terminal.buffer.ownsAnchor(lineEnd)) {
+      return;
+    }
+    final (first, last) = _logicalLineRows(getCellOffset(to).y);
+    final toRange = BufferRangeLine(
+      CellOffset(0, first),
+      CellOffset(_terminal.viewWidth, last),
+    );
+    final range = BufferRangeLine(lineBegin.offset, lineEnd.offset)
+        .merge(toRange);
+    _controller.setSelection(
+      _terminal.buffer.createAnchorFromOffset(range.begin),
+      _terminal.buffer.createAnchorFromOffset(range.end),
       mode: SelectionMode.line,
     );
   }
@@ -414,6 +445,17 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
     return (
       _terminal.buffer.createAnchorFromOffset(boundary.begin),
       _terminal.buffer.createAnchorFromOffset(boundary.end),
+    );
+  }
+
+  /// [seance fork] Creates owned anchors pinning the logical line at pixel
+  /// [offset] (soft-wrap continuations included). The caller must dispose
+  /// them.
+  (CellAnchor, CellAnchor) createLineAnchorsAt(Offset offset) {
+    final (first, last) = _logicalLineRows(getCellOffset(offset).y);
+    return (
+      _terminal.buffer.createAnchor(0, first),
+      _terminal.buffer.createAnchor(_terminal.viewWidth, last),
     );
   }
 

@@ -245,8 +245,25 @@ class IndexAwareCircularBuffer<T extends IndexedItem> {
   /// instead just adjusts the start index and length.
   void trimStart(int count) {
     if (count > _length) count = _length;
+    if (count <= 0) return;
+    // [seance fork] Same bookkeeping as the push() eviction path (PATCHES.md
+    // 8/9), which this method skipped entirely. Without it a CSI 3J (the
+    // remote `clear` command reaches here via Buffer.clearScrollback):
+    //  - left trimmed lines attached, so ownsAnchor guards passed on anchors
+    //    whose rows no longer exist (RangeError on the next selection op),
+    //  - left absoluteStartIndex behind, so every SURVIVING line reported a
+    //    stale index and even freshly created anchors were out of range,
+    //  - never told the viewport how much content vanished above it.
+    final survivor = count < _length ? _getChild(count) : null;
+    for (var i = 0; i < count; i++) {
+      // Anchors held on trimmed lines degrade to the first surviving line
+      // (clamped to its start), exactly like a ring-buffer eviction.
+      _getChild(i)?.migrateOnEvict(survivor);
+      _dropChild(i);
+    }
     _startIndex += count;
     _startIndex %= _array.length;
+    _absoluteStartIndex += count;
     _length -= count;
   }
 
