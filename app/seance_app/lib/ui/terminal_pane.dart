@@ -417,19 +417,90 @@ class _TabChip extends StatelessWidget {
     this.onRename,
   });
 
+  /// Where to anchor a menu opened by long-press, which — unlike a right-click
+  /// — carries no position of its own.
+  Offset _chipCenter(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return Offset.zero;
+    return box.localToGlobal(box.size.center(Offset.zero));
+  }
+
+  Future<void> _showMenu(BuildContext context, Offset globalPosition) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final metadata = session.metadata.value;
+    final config = session.config;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        overlay.size.width - globalPosition.dx,
+        overlay.size.height - globalPosition.dy,
+      ),
+      items: [
+        // The tooltip's content, as a menu header: on touch there is no hover
+        // to show it any other way, and this is the gesture that used to.
+        PopupMenuItem(
+          enabled: false,
+          height: 0,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Text(
+            sessionTabTooltip(
+              ordinal: ordinal,
+              target: '${config.username}@${config.host}:${config.port}',
+              workingDirectory: metadata.workingDirectory,
+              terminalTitle: metadata.terminalTitle,
+              runningCommand: metadata.runningCommand,
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(value: 'rename', child: Text('Rename tab…')),
+        const PopupMenuItem(value: 'close', child: Text('Close tab')),
+      ],
+    );
+    if (choice == 'rename') {
+      onRename?.call();
+    } else if (choice == 'close') {
+      onClose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final config = session.config;
     final metadata = session.metadata.value;
     // Middle-click closes, matching browser/terminal tab conventions.
-    // Double-click renames on a desktop; long-press is its touch equivalent,
-    // where there is no second click and no right-click menu to hang it off.
+    //
+    // Rename is reached through a context menu — right-click on a desktop,
+    // long-press on touch — rather than through a tab gesture directly.
+    // Both alternatives were tried and measured:
+    //
+    //  * `onLongPress` never fired: [Tooltip] registers its own long-press
+    //    recognizer and wins the arena, so the tip appeared and rename did
+    //    not.
+    //  * `onDoubleTap` worked, but registering it made the InkWell's `onTap`
+    //    wait out the double-tap timeout before resolving — a ~300 ms delay
+    //    on *every tab switch* to pay for a rare action.
+    //
+    // A menu also gives the action a name, which no bare gesture does.
     return GestureDetector(
       onTertiaryTapUp: (_) => onClose(),
-      onDoubleTap: onRename,
-      onLongPress: onRename,
+      onSecondaryTapUp: onRename == null
+          ? null
+          : (details) => _showMenu(context, details.globalPosition),
+      onLongPress: onRename == null
+          ? null
+          : () => _showMenu(context, _chipCenter(context)),
       child: Tooltip(
+          // No gesture trigger, so the long-press above reaches this widget.
+          // Hover is unaffected — it is handled separately from the trigger
+          // mode — so a desktop still gets the tip by pointing at the tab.
+          // Touch keeps the same information: the menu opened by long-press
+          // carries it as the header.
+          triggerMode: TooltipTriggerMode.manual,
           message: sessionTabTooltip(
             ordinal: ordinal,
             target:

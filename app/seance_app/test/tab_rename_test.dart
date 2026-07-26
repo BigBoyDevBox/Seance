@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart' show kDoubleTapMinTime;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:seance_app/app_state.dart';
@@ -85,6 +84,30 @@ void main() {
     });
   });
 
+  test('a reconnect carries the name the user chose', () {
+    final engine = XtermTerminalEngine();
+    addTearDown(engine.dispose);
+    // What AppState.reconnect hands the replacement session: the metadata
+    // minus the dead command, and the name verbatim.
+    final replacement = TerminalSession(
+      id: 'new',
+      serverId: 'server',
+      config: config(),
+      engine: engine,
+      connecting: false,
+      initialMetadata: const SessionMetadata(
+        workingDirectory: '/srv/app',
+        runningCommand: 'tail -f app.log',
+      ).withoutRunningCommand,
+      initialCustomName: 'deploy',
+    );
+    addTearDown(replacement.dispose);
+
+    expect(replacement.customName.value, 'deploy');
+    expect(replacement.metadata.value.workingDirectory, '/srv/app');
+    expect(replacement.metadata.value.runningCommand, isNull);
+  });
+
   group('a named tab still disambiguates', () {
     test('two tabs named the same still get ordinals', () {
       expect(disambiguateTabLabels(['deploy', 'deploy']), [
@@ -94,37 +117,42 @@ void main() {
     });
   });
 
-  testWidgets('double-tapping a tab renames it, and Reset clears it', (
-    tester,
-  ) async {
+  /// Long-press stands in for both entry points: it and right-click open the
+  /// same menu. `tester.longPress` also proves the [Tooltip] no longer eats
+  /// the gesture, which it did while its trigger mode was the default.
+  Future<void> openTabMenu(WidgetTester tester, Finder tab) async {
+    await tester.longPress(tab);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('the tab menu renames, and Reset clears it', (tester) async {
     final tab = session(
       metadata: const SessionMetadata(workingDirectory: '/home/user'),
     );
     final renames = <(String, String?)>[];
 
-    Widget strip() => MaterialApp(
-      home: Scaffold(
-        body: TerminalTabStrip(
-          tabs: [tab],
-          activeSessionId: tab.id,
-          onFocus: (_) {},
-          onClose: (_) {},
-          onNewTab: () {},
-          onGenerateCommand: () {},
-          onRename: (id, name) {
-            renames.add((id, name));
-            tab.customName.value = name;
-          },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalTabStrip(
+            tabs: [tab],
+            activeSessionId: tab.id,
+            onFocus: (_) {},
+            onClose: (_) {},
+            onNewTab: () {},
+            onGenerateCommand: () {},
+            onRename: (id, name) {
+              renames.add((id, name));
+              tab.customName.value = name;
+            },
+          ),
         ),
       ),
     );
-
-    await tester.pumpWidget(strip());
     expect(find.text('user'), findsOneWidget);
 
-    await tester.tap(find.text('user'));
-    await tester.pump(kDoubleTapMinTime);
-    await tester.tap(find.text('user'));
+    await openTabMenu(tester, find.text('user'));
+    await tester.tap(find.text('Rename tab…'));
     await tester.pumpAndSettle();
 
     expect(find.text('Rename tab'), findsOneWidget);
@@ -136,9 +164,8 @@ void main() {
     expect(find.text('deploy'), findsOneWidget);
 
     // Reopen: the field is prefilled and Reset returns to automatic naming.
-    await tester.tap(find.text('deploy'));
-    await tester.pump(kDoubleTapMinTime);
-    await tester.tap(find.text('deploy'));
+    await openTabMenu(tester, find.text('deploy'));
+    await tester.tap(find.text('Rename tab…'));
     await tester.pumpAndSettle();
 
     expect(find.widgetWithText(TextField, 'deploy'), findsOneWidget);
@@ -147,6 +174,73 @@ void main() {
 
     expect(renames.last, ('tab', null));
     expect(find.text('user'), findsOneWidget);
+  });
+
+  testWidgets('the menu carries the session details touch cannot hover for', (
+    tester,
+  ) async {
+    final tab = session(
+      metadata: const SessionMetadata(
+        workingDirectory: '/srv/app',
+        runningCommand: 'tail -f app.log',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalTabStrip(
+            tabs: [tab],
+            activeSessionId: tab.id,
+            onFocus: (_) {},
+            onClose: (_) {},
+            onNewTab: () {},
+            onGenerateCommand: () {},
+            onRename: (_, _) {},
+          ),
+        ),
+      ),
+    );
+
+    await openTabMenu(tester, find.text('tail -f app.log'));
+    expect(
+      find.textContaining('user@example.com:22'),
+      findsOneWidget,
+      reason: 'the menu header replaces the tooltip on touch',
+    );
+    expect(find.textContaining('/srv/app'), findsOneWidget);
+  });
+
+  testWidgets('switching tabs is not delayed by the rename affordance', (
+    tester,
+  ) async {
+    final tab = session(
+      metadata: const SessionMetadata(workingDirectory: '/home/user'),
+    );
+    var focused = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalTabStrip(
+            tabs: [tab],
+            activeSessionId: tab.id,
+            onFocus: (_) => focused++,
+            onClose: (_) {},
+            onNewTab: () {},
+            onGenerateCommand: () {},
+            onRename: (_, _) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('user'));
+    await tester.pump();
+    // An onDoubleTap handler here would hold this back for the double-tap
+    // timeout, taxing every tab switch for the sake of a rare rename.
+    expect(focused, 1, reason: 'a tab switch must resolve on the tap itself');
+    await tester.pumpAndSettle();
   });
 
   testWidgets('cancelling leaves the name alone', (tester) async {
@@ -169,11 +263,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('deploy'));
-    await tester.pump(kDoubleTapMinTime);
-    await tester.tap(find.text('deploy'));
+    await openTabMenu(tester, find.text('deploy'));
+    await tester.tap(find.text('Rename tab…'));
     await tester.pumpAndSettle();
-
     await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
     await tester.pumpAndSettle();
 
@@ -204,9 +296,8 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('user'));
-    await tester.pump(kDoubleTapMinTime);
-    await tester.tap(find.text('user'));
+    await openTabMenu(tester, find.text('user'));
+    await tester.tap(find.text('Rename tab…'));
     await tester.pumpAndSettle();
 
     expect(find.text('Rename tab'), findsOneWidget);

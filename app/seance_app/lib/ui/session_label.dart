@@ -88,7 +88,9 @@ String sessionTabLabel({
   int maxLength = 18,
 }) {
   // Tail-truncated like a command: the user typed the front, so that is the
-  // half worth keeping.
+  // half worth keeping. Sanitized again although `renameSession` already did
+  // it on the way in — this function is pure and takes strings from anywhere,
+  // so it cannot assume a caller cleaned them.
   final custom = customName == null ? '' : sanitizeRemoteLabel(customName);
   if (custom.isNotEmpty) return shortenLabelTail(custom, maxLength);
   final command = runningCommand == null
