@@ -68,20 +68,21 @@ void main() {
     });
 
     test('charInput mirrors the same platform gate', () {
-      final output = <String>[];
+      final linuxOutput = <String>[];
       final linux = Terminal(
-        onOutput: output.add,
+        onOutput: linuxOutput.add,
         platform: TerminalTargetPlatform.linux,
       );
       expect(linux.charInput(0x6e, alt: true), isTrue);
-      expect(output, ['\x1bn']);
+      expect(linuxOutput, ['\x1bn']);
 
+      final macOutput = <String>[];
       final mac = Terminal(
-        onOutput: output.add,
+        onOutput: macOutput.add,
         platform: TerminalTargetPlatform.macos,
       );
       expect(mac.charInput(0x6e, alt: true), isFalse);
-      expect(output, hasLength(1));
+      expect(macOutput, isEmpty);
     });
   });
 
