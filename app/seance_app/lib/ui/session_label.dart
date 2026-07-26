@@ -69,21 +69,28 @@ String? posixBasename(String path) {
 /// The label shown on a session's tab chip.
 ///
 /// Preference order, most to least informative:
-/// 1. the command the session is running — what the tab is *doing* beats
+/// 1. a name the user gave the tab — an explicit choice always wins; the
+///    roles behind three tabs on one box are not inferable,
+/// 2. the command the session is running — what the tab is *doing* beats
 ///    where it is; two tabs on one host usually exist to run different
 ///    things, so this is both the best name and a natural disambiguator,
-/// 2. the working directory's last segment (OSC 7) — the server is already
+/// 3. the working directory's last segment (OSC 7) — the server is already
 ///    identified by the selected row, so *where* on it is the useful part,
-/// 3. the terminal title (OSC 0/2), which many Bash setups carry even when
+/// 4. the terminal title (OSC 0/2), which many Bash setups carry even when
 ///    they do not emit OSC 7,
-/// 4. `Session N` — the original behavior, when the shell reports nothing.
+/// 5. `Session N` — the original behavior, when the shell reports nothing.
 String sessionTabLabel({
   required int ordinal,
+  String? customName,
   String? workingDirectory,
   String? terminalTitle,
   String? runningCommand,
   int maxLength = 18,
 }) {
+  // Tail-truncated like a command: the user typed the front, so that is the
+  // half worth keeping.
+  final custom = customName == null ? '' : sanitizeRemoteLabel(customName);
+  if (custom.isNotEmpty) return shortenLabelTail(custom, maxLength);
   final command = runningCommand == null
       ? ''
       : sanitizeRemoteLabel(runningCommand);

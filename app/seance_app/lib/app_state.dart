@@ -11,6 +11,7 @@ import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
 import 'services/remote_files_controller.dart';
 import 'services/xterm_engine.dart';
+import 'ui/session_label.dart';
 import 'ui/terminal_appearance.dart';
 
 /// Connection state of a server's terminal, mirrored by the status dot in the
@@ -111,6 +112,18 @@ class TerminalSession {
   /// the tab strip alone instead of the whole app.
   final ValueNotifier<SessionMetadata> metadata;
 
+  /// A name the user gave this tab, or null to follow the shell.
+  ///
+  /// Overrides every automatic source. When you open three tabs to one box
+  /// you have roles in mind — "logs", "deploy" — that no heuristic can guess,
+  /// so the manual name is the top of the naming ladder and nothing the
+  /// remote reports displaces it.
+  ///
+  /// Kept separate from [metadata] deliberately: that is what the *shell*
+  /// reported, and a user-chosen name is not remote data. In memory only,
+  /// like the sessions it names — a relaunch has no session to re-label.
+  final ValueNotifier<String?> customName;
+
   /// How long a command must keep running before it becomes the tab's name.
   /// Quick commands (`ls`, `git status`) finish inside this window, so the
   /// strip doesn't repaint a new label for every enter key.
@@ -134,8 +147,10 @@ class TerminalSession {
     this.connecting = true,
     this.error,
     SessionMetadata initialMetadata = const SessionMetadata(),
+    String? initialCustomName,
   }) : editSessionId = editSessionId ?? id,
-       metadata = ValueNotifier<SessionMetadata>(initialMetadata) {
+       metadata = ValueNotifier<SessionMetadata>(initialMetadata),
+       customName = ValueNotifier<String?>(initialCustomName) {
     log = SshConnectionLog(onUpdate: logNotifier.bump);
     engine.workingDirectory.addListener(_syncMetadata);
     engine.terminalTitle.addListener(_syncMetadata);
@@ -204,6 +219,7 @@ class TerminalSession {
     engine.terminalTitle.removeListener(_syncMetadata);
     engine.activeCommand.removeListener(_syncRunningCommand);
     metadata.dispose();
+    customName.dispose();
   }
 
   bool get isConnected => session != null && !session!.isClosed;
@@ -586,8 +602,9 @@ class AppState extends ChangeNotifier {
       // Carry the shell-reported identity across the reconnect so the tab
       // keeps its name instead of flickering back to "Session N". The running
       // command is deliberately not carried: it belonged to the dead
-      // connection.
+      // connection. A name the user chose outlives the connection entirely.
       initialMetadata: old.metadata.value.withoutRunningCommand,
+      initialCustomName: old.customName.value,
     );
     sessions[index] = replacement;
     if (activeSessionId == old.id) _setActive(replacement.id);
@@ -838,6 +855,22 @@ class AppState extends ChangeNotifier {
     if (sessionById(sessionId) == null) return;
     _setActive(sessionId);
     notifyListeners();
+  }
+
+  /// Name a tab explicitly, or clear the name (null or blank) to return it to
+  /// shell-derived naming.
+  ///
+  /// The name is collapsed to one line the same way remote labels are — not
+  /// because the user is untrusted, but because a tab chip is one line of
+  /// chrome and a pasted newline would break the strip either way.
+  void renameSession(String sessionId, String? name) {
+    final session = sessionById(sessionId);
+    if (session == null) return;
+    final cleaned = name == null ? '' : sanitizeRemoteLabel(name);
+    // Only the chip repaints: the name lives on the session's own notifier,
+    // so renaming a tab does not rebuild the app the way notifyListeners
+    // would.
+    session.customName.value = cleaned.isEmpty ? null : cleaned;
   }
 
   /// Set the active session and remember it as its server's most-recent tab.
