@@ -17,6 +17,19 @@ import 'ui/terminal_appearance.dart';
 /// server list (green / grey / red, with a spinner while connecting).
 enum TerminalStatus { connecting, connected, disconnected, error }
 
+/// Repaint signal for one session's connection log.
+///
+/// dartssh2 calls `printTrace` per packet, so a handshake appends hundreds of
+/// lines. Routing those into [AppState.notifyListeners] rebuilt the server
+/// list, every mounted terminal, and the utility panel once per trace line —
+/// a burst of full-tree rebuilds during exactly the moment the user is already
+/// waiting on a connection. Giving the log its own notifier means only the
+/// widget that displays it repaints, and while the pane is showing the
+/// connecting spinner there is no listener at all.
+class ConnectionLogNotifier extends ChangeNotifier {
+  void bump() => notifyListeners();
+}
+
 /// One terminal session — a single SSH connection. A server can have several
 /// (shown as tabs inside its terminal pane), so a session has its own [id]
 /// distinct from its [serverId]; many sessions can share one [serverId].
@@ -37,8 +50,13 @@ class TerminalSession {
   String? error;
 
   /// Live transcript of the current/last connection attempt, shown in the
-  /// "connection log" details when a connection fails.
-  SshConnectionLog log;
+  /// "connection log" details when a connection fails. Owned by the session so
+  /// its trace lines drive [logNotifier] rather than the whole app.
+  late final SshConnectionLog log;
+
+  /// Repaints the connection-log view as lines arrive. See
+  /// [ConnectionLogNotifier].
+  final ConnectionLogNotifier logNotifier = ConnectionLogNotifier();
 
   /// The xterm selection controller for this session's terminal. Set by the
   /// live [_SessionView] widget while it's mounted (and cleared on dispose), so
@@ -51,10 +69,11 @@ class TerminalSession {
     required this.serverId,
     required this.config,
     required this.engine,
-    required this.log,
     this.connecting = true,
     this.error,
-  }) : editSessionId = editSessionId ?? id;
+  }) : editSessionId = editSessionId ?? id {
+    log = SshConnectionLog(onUpdate: logNotifier.bump);
+  }
 
   bool get isConnected => session != null && !session!.isClosed;
 
@@ -335,7 +354,6 @@ class AppState extends ChangeNotifier {
       serverId: config.id,
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
-      log: SshConnectionLog(onUpdate: notifyListeners),
     );
     sessions.insert(insertIndexFor(sessions, config.id), tab);
     _setActive(tab.id);
@@ -434,7 +452,6 @@ class AppState extends ChangeNotifier {
       serverId: old.serverId,
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
-      log: SshConnectionLog(onUpdate: notifyListeners),
     );
     sessions[index] = replacement;
     if (activeSessionId == old.id) _setActive(replacement.id);
@@ -478,10 +495,19 @@ class AppState extends ChangeNotifier {
       }
       tab.retainedLocalCopies.clear();
     }
-    if (tab.session != null) {
-      await tab.session!.close(); // SshSession.close disposes the engine
-    } else {
-      await tab.engine.dispose();
+    // Sever the log's callback before anything async begins: a trace line
+    // arriving during (or after) teardown would otherwise reach a notifier
+    // that is about to be disposed, which asserts. Freezing also stops the
+    // transcript growing while the transport closes.
+    tab.log.freeze();
+    try {
+      if (tab.session != null) {
+        await tab.session!.close(); // SshSession.close disposes the engine
+      } else {
+        await tab.engine.dispose();
+      }
+    } finally {
+      tab.logNotifier.dispose();
     }
   }
 
@@ -894,7 +920,6 @@ class AppState extends ChangeNotifier {
         serverId: config.id,
         config: config,
         engine: XtermTerminalEngine(onCommand: _recordCommand),
-        log: SshConnectionLog(onUpdate: notifyListeners),
         connecting: false,
       );
       tab.retainedLocalCopies.addEntries(
@@ -918,8 +943,18 @@ class AppState extends ChangeNotifier {
     services.probe.connectedServerIds = null;
     services.probe.dispose();
     for (final t in sessions) {
-      _disposeSession(t);
+      // Teardown is asynchronous but nothing can await it here: swallow the
+      // failure explicitly rather than leaving an unhandled async error to
+      // surface long after the state object is gone.
+      unawaited(
+        _disposeSession(t).catchError((Object error, StackTrace stack) {
+          debugPrint('Session teardown failed: $error\n$stack');
+        }),
+      );
     }
+    // Teardown is in flight and does not read this list; clearing it makes the
+    // contract explicit — nothing may reach a session after this point.
+    sessions.clear();
     super.dispose();
   }
 }

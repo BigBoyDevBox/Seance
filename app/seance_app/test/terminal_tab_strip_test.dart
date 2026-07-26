@@ -29,7 +29,6 @@ void main() {
       serverId: config.id,
       config: config,
       engine: engine,
-      log: SshConnectionLog(),
       connecting: false,
     );
     var newTabCalls = 0;

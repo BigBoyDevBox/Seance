@@ -27,7 +27,6 @@ void main() {
       serverId: serverId,
       config: cfg(serverId),
       engine: engine,
-      log: SshConnectionLog(),
     );
   }
 
