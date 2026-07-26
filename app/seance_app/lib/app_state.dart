@@ -6,6 +6,7 @@ import 'package:xterm/xterm.dart' show TerminalController;
 
 import 'services/app_services.dart';
 import 'services/app_settings.dart';
+import 'services/chat_session.dart';
 import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
 import 'services/remote_files_controller.dart';
@@ -121,6 +122,11 @@ class AppState extends ChangeNotifier {
   List<String> commandSuggestions = [];
   final SecretRedactor _redactor = SecretRedactor();
   Timer? _statsSaveDebounce;
+
+  /// The assistant conversation. Lives here rather than in the sidebar widget
+  /// so it survives the drawer closing on narrow layouts, and the pane being
+  /// rebuilt when the layout crosses the wide/narrow breakpoint.
+  final ChatSession chat = ChatSession();
 
   /// UI-supplied interaction hooks (wired by the root widget so dialogs can be
   /// shown). Default to a safe "deny" if the UI hasn't set them yet.
@@ -882,6 +888,7 @@ class AppState extends ChangeNotifier {
     _autoSyncTimer?.cancel();
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
+    chat.dispose();
     // Drop the callback before the service goes: it closes over `sessions`,
     // so a probe service that outlived this state would keep reading a list
     // that is no longer maintained (and keep this object alive).
