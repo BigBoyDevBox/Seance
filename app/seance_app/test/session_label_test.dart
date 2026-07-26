@@ -120,4 +120,93 @@ void main() {
       );
     });
   });
+
+  group('running command in the label', () {
+    test('what the tab is doing beats where it is', () {
+      expect(
+        sessionTabLabel(
+          ordinal: 1,
+          workingDirectory: '/srv/app',
+          terminalTitle: 'ops@web: /srv/app',
+          runningCommand: 'tail -f app.log',
+        ),
+        'tail -f app.log',
+      );
+    });
+
+    test('a long command keeps its head, not its tail', () {
+      expect(
+        sessionTabLabel(
+          ordinal: 1,
+          runningCommand: 'rsync -avz --progress ./build deploy@web:/srv',
+          maxLength: 12,
+        ),
+        'rsync -avz \u2026',
+      );
+    });
+
+    test('a command is sanitized like any remote text', () {
+      expect(
+        sessionTabLabel(ordinal: 1, runningCommand: 'ok\u202ekcatta'),
+        'ok kcatta',
+      );
+    });
+
+    test('an absent or blank command falls through to the directory', () {
+      expect(
+        sessionTabLabel(
+          ordinal: 1,
+          workingDirectory: '/srv/app',
+          runningCommand: '  ',
+        ),
+        'app',
+      );
+    });
+  });
+
+  group('disambiguateTabLabels', () {
+    test('unique labels pass through untouched', () {
+      expect(disambiguateTabLabels(['app', 'logs', '~']), [
+        'app',
+        'logs',
+        '~',
+      ]);
+    });
+
+    test('duplicates get stable ordinals in tab order', () {
+      expect(disambiguateTabLabels(['~', '~', 'app', '~']), [
+        '~ \u00b71',
+        '~ \u00b72',
+        'app',
+        '~ \u00b73',
+      ]);
+    });
+
+    test('independent duplicate groups number independently', () {
+      expect(disambiguateTabLabels(['a', 'b', 'a', 'b']), [
+        'a \u00b71',
+        'b \u00b71',
+        'a \u00b72',
+        'b \u00b72',
+      ]);
+    });
+
+    test('an empty strip is fine', () {
+      expect(disambiguateTabLabels([]), isEmpty);
+    });
+  });
+
+  group('tooltip with a running command', () {
+    test('says what is running above where it is', () {
+      expect(
+        sessionTabTooltip(
+          ordinal: 1,
+          target: 'ops@web:22',
+          workingDirectory: '/srv/app',
+          runningCommand: 'htop',
+        ),
+        'Session 1 \u00b7 ops@web:22\nRunning: htop\n/srv/app',
+      );
+    });
+  });
 }

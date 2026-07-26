@@ -84,6 +84,16 @@ class XtermTerminalEngine implements TerminalEngine {
   final ValueNotifier<ShellIntegrationState> shellIntegration =
       ValueNotifier<ShellIntegrationState>(const ShellIntegrationState());
 
+  /// The command line currently executing (best effort), or null at a prompt.
+  ///
+  /// Set when Enter submits a non-empty captured line *at an accepting OSC
+  /// 133 prompt* — which both filters out lines typed into a running program
+  /// and guarantees the integration that will deliver the end-of-command
+  /// signal. Without 133 this stays null: a name that can never clear is
+  /// worse than none. Cleared when the shell reports the command done
+  /// (`133;D`) or a fresh prompt (`133;A`).
+  final ValueNotifier<String?> activeCommand = ValueNotifier<String?>(null);
+
   // A best-effort reconstruction of the current, not-yet-submitted input line,
   // built from the keystrokes the user sends. Used to prefill the command
   // generator. It's an approximation — full readline editing (history, cursor
@@ -150,6 +160,7 @@ class XtermTerminalEngine implements TerminalEngine {
     final current = shellIntegration.value;
     switch (marker) {
       case 'A':
+        activeCommand.value = null;
         shellIntegration.value = current.copyWith(
           phase: TerminalPromptPhase.rendering,
           clearExitCode: true,
@@ -175,6 +186,7 @@ class XtermTerminalEngine implements TerminalEngine {
           inputSincePrompt: true,
         );
       case 'D':
+        activeCommand.value = null;
         final status = args.length > 1 ? int.tryParse(args[1]) : null;
         if (_submittedSincePrompt) _sawCommandCompletion = true;
         shellIntegration.value = current.copyWith(
@@ -234,12 +246,17 @@ class XtermTerminalEngine implements TerminalEngine {
     if (data.isEmpty || data.codeUnitAt(0) == 0x1b) return;
     for (final r in data.runes) {
       if (r == 0x0d || r == 0x0a) {
+        // Read before the phase is overwritten below: only an Enter at an
+        // accepting prompt submits a *command*. An Enter while a command is
+        // already executing is input to that program, not a new command.
+        final atPrompt =
+            shellIntegration.value.phase == TerminalPromptPhase.acceptingInput;
         _submittedSincePrompt = true;
         shellIntegration.value = shellIntegration.value.copyWith(
           phase: TerminalPromptPhase.executing,
           inputSincePrompt: true,
         );
-        _submitPending();
+        _submitPending(atPrompt: atPrompt);
       } else if (r == 0x7f || r == 0x08) {
         if (_pendingInput.isNotEmpty) {
           _pendingInput = _pendingInput.substring(0, _pendingInput.length - 1);
@@ -254,9 +271,17 @@ class XtermTerminalEngine implements TerminalEngine {
   }
 
   /// A line was submitted: report it (for command suggestions) and reset.
-  void _submitPending() {
+  ///
+  /// [atPrompt] — whether the shell was at an accepting OSC 133 prompt when
+  /// Enter arrived. Only then is the line a command (see [activeCommand]);
+  /// `acceptingInput` is only ever set from a `133;B` marker, so this gate
+  /// also implies the integration that will later deliver the clearing `D`.
+  void _submitPending({required bool atPrompt}) {
     final line = _pendingInput.trim();
-    if (line.isNotEmpty) onCommand?.call(line);
+    if (line.isNotEmpty) {
+      onCommand?.call(line);
+      if (atPrompt) activeCommand.value = line;
+    }
     _pendingInput = '';
   }
 
@@ -380,6 +405,7 @@ class XtermTerminalEngine implements TerminalEngine {
     workingDirectory.dispose();
     terminalTitle.dispose();
     shellIntegration.dispose();
+    activeCommand.dispose();
     await _input.close();
   }
 }

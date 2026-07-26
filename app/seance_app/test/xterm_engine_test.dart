@@ -248,4 +248,69 @@ void main() {
     );
     await e.dispose();
   });
+
+  group('activeCommand', () {
+    const integrated =
+        '\x1b]1337;ShellIntegrationVersion=1;bash\x07'
+        '\x1b]133;A\x07\x1b]133;B\x07';
+
+    test('names the line submitted at an accepting prompt', () async {
+      final e = XtermTerminalEngine();
+      e.feed(Uint8List.fromList(utf8.encode(integrated)));
+      e.injectInput('htop');
+      e.sendKey([0x0d]);
+      expect(e.activeCommand.value, 'htop');
+      await e.dispose();
+    });
+
+    test('stays null without OSC 133 integration', () async {
+      final e = XtermTerminalEngine();
+      e.injectInput('htop');
+      e.sendKey([0x0d]);
+      // No 133;D will ever arrive to clear it, so it must never be set.
+      expect(e.activeCommand.value, isNull);
+      await e.dispose();
+    });
+
+    test('is cleared when the shell reports the command done', () async {
+      final e = XtermTerminalEngine();
+      e.feed(Uint8List.fromList(utf8.encode(integrated)));
+      e.injectInput('sleep 60');
+      e.sendKey([0x0d]);
+      expect(e.activeCommand.value, 'sleep 60');
+      e.feed(Uint8List.fromList(utf8.encode('\x1b]133;D;0\x07')));
+      expect(e.activeCommand.value, isNull);
+      await e.dispose();
+    });
+
+    test('is cleared by a fresh prompt even if D was lost', () async {
+      final e = XtermTerminalEngine();
+      e.feed(Uint8List.fromList(utf8.encode(integrated)));
+      e.injectInput('make');
+      e.sendKey([0x0d]);
+      e.feed(Uint8List.fromList(utf8.encode('\x1b]133;A\x07')));
+      expect(e.activeCommand.value, isNull);
+      await e.dispose();
+    });
+
+    test('lines typed into a running program do not rename it', () async {
+      final e = XtermTerminalEngine();
+      e.feed(Uint8List.fromList(utf8.encode(integrated)));
+      e.injectInput('cat > notes.txt');
+      e.sendKey([0x0d]);
+      // The shell is executing now; these lines belong to cat, not the shell.
+      e.injectInput('dear diary');
+      e.sendKey([0x0d]);
+      expect(e.activeCommand.value, 'cat > notes.txt');
+      await e.dispose();
+    });
+
+    test('an empty Enter at the prompt is not a command', () async {
+      final e = XtermTerminalEngine();
+      e.feed(Uint8List.fromList(utf8.encode(integrated)));
+      e.sendKey([0x0d]);
+      expect(e.activeCommand.value, isNull);
+      await e.dispose();
+    });
+  });
 }

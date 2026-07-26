@@ -231,19 +231,42 @@ class TerminalTabStrip extends StatelessWidget {
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  for (var i = 0; i < tabs.length; i++)
-                    _TabChip(
-                      // 1-based ordinal within the server, used only as the
-                      // fallback name when the shell reports nothing.
-                      ordinal: i + 1,
-                      session: tabs[i],
-                      selected: tabs[i].id == activeSessionId,
-                      onTap: () => onFocus(tabs[i].id),
-                      onClose: () => onClose(tabs[i].id),
-                    ),
-                ],
+              // One listenable over every tab's metadata, not one per chip: a
+              // name change on one tab can add or remove another tab's
+              // disambiguating suffix, so labels are computed across the
+              // strip. Still scoped to this server's tabs — nothing here
+              // repaints the rest of the app.
+              child: ListenableBuilder(
+                listenable: Listenable.merge([
+                  for (final tab in tabs) tab.metadata,
+                ]),
+                builder: (context, _) {
+                  final labels = disambiguateTabLabels([
+                    for (var i = 0; i < tabs.length; i++)
+                      sessionTabLabel(
+                        // 1-based ordinal within the server, used only as the
+                        // fallback name when the shell reports nothing.
+                        ordinal: i + 1,
+                        workingDirectory:
+                            tabs[i].metadata.value.workingDirectory,
+                        terminalTitle: tabs[i].metadata.value.terminalTitle,
+                        runningCommand: tabs[i].metadata.value.runningCommand,
+                      ),
+                  ]);
+                  return Row(
+                    children: [
+                      for (var i = 0; i < tabs.length; i++)
+                        _TabChip(
+                          ordinal: i + 1,
+                          label: labels[i],
+                          session: tabs[i],
+                          selected: tabs[i].id == activeSessionId,
+                          onTap: () => onFocus(tabs[i].id),
+                          onClose: () => onClose(tabs[i].id),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -277,11 +300,12 @@ class TerminalTabStrip extends StatelessWidget {
   }
 }
 
-/// One tab in the strip. Its name follows the session's shell-reported
-/// identity, so it rebuilds on the session's own metadata notifier rather than
-/// on app-wide state.
+/// One tab in the strip. Its [label] is computed by the strip across all
+/// same-server tabs (the disambiguating suffix depends on its siblings), so
+/// the chip itself is display-only.
 class _TabChip extends StatelessWidget {
   final int ordinal;
+  final String label;
   final TerminalSession session;
   final bool selected;
   final VoidCallback onTap;
@@ -289,6 +313,7 @@ class _TabChip extends StatelessWidget {
 
   const _TabChip({
     required this.ordinal,
+    required this.label,
     required this.session,
     required this.selected,
     required this.onTap,
@@ -299,18 +324,18 @@ class _TabChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final config = session.config;
+    final metadata = session.metadata.value;
     // Middle-click closes, matching browser/terminal tab conventions.
     return GestureDetector(
       onTertiaryTapUp: (_) => onClose(),
-      child: ValueListenableBuilder<SessionMetadata>(
-        valueListenable: session.metadata,
-        builder: (context, metadata, _) => Tooltip(
+      child: Tooltip(
           message: sessionTabTooltip(
             ordinal: ordinal,
             target:
                 '${config.username}@${config.host}:${config.port}',
             workingDirectory: metadata.workingDirectory,
             terminalTitle: metadata.terminalTitle,
+            runningCommand: metadata.runningCommand,
           ),
           child: InkWell(
             onTap: onTap,
@@ -332,11 +357,7 @@ class _TabChip extends StatelessWidget {
                   _TabStatusDot(status: session.status),
                   const SizedBox(width: 6),
                   Text(
-                    sessionTabLabel(
-                      ordinal: ordinal,
-                      workingDirectory: metadata.workingDirectory,
-                      terminalTitle: metadata.terminalTitle,
-                    ),
+                    label,
                     style: TextStyle(
                       fontWeight: selected
                           ? FontWeight.w600
@@ -360,7 +381,6 @@ class _TabChip extends StatelessWidget {
               ),
             ),
           ),
-        ),
       ),
     );
   }

@@ -59,4 +59,58 @@ void main() {
     expect(generateCalls, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('same-place tabs get disambiguating suffixes', (tester) async {
+    final config = ServerConfig(
+      id: 'server',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'user',
+      authMethod: AuthMethod.password,
+      createdAt: 0,
+      updatedAt: 0,
+    );
+    TerminalSession tab(String id) {
+      final engine = XtermTerminalEngine();
+      addTearDown(engine.dispose);
+      final t = TerminalSession(
+        id: id,
+        serverId: config.id,
+        config: config,
+        engine: engine,
+        connecting: false,
+        initialMetadata: const SessionMetadata(workingDirectory: '/home/user'),
+      );
+      addTearDown(t.dispose);
+      return t;
+    }
+
+    final a = tab('a');
+    final b = tab('b');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalTabStrip(
+            tabs: [a, b],
+            activeSessionId: a.id,
+            onFocus: (_) {},
+            onClose: (_) {},
+            onNewTab: () {},
+            onGenerateCommand: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('user \u00b71'), findsOneWidget);
+    expect(find.text('user \u00b72'), findsOneWidget);
+
+    // One tab moves elsewhere: both suffixes disappear on their own.
+    b.metadata.value = const SessionMetadata(workingDirectory: '/var/log');
+    await tester.pump();
+    expect(find.text('user'), findsOneWidget);
+    expect(find.text('log'), findsOneWidget);
+  });
 }
