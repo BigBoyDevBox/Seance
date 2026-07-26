@@ -69,9 +69,15 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
   CellAnchor? _dragStartAnchor;
 
   /// [seance fork] Word-boundary anchors of the word under the gesture
-  /// origin, for word-select drags (touch pan / long-press).
+  /// origin, for word-select drags (touch pan / long-press, and a drag that
+  /// grows out of a double-click).
   CellAnchor? _dragWordBegin;
   CellAnchor? _dragWordEnd;
+
+  /// [seance fork] Logical-line anchors of the line under the gesture
+  /// origin, for line-select drags (a drag that grows out of a triple-click).
+  CellAnchor? _dragLineBegin;
+  CellAnchor? _dragLineEnd;
 
   /// [seance fork] Edge-autoscroll state: while a drag sits near (or past)
   /// the top/bottom edge, scroll the viewport a proportional step per tick
@@ -98,6 +104,10 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _dragWordBegin = null;
     _dragWordEnd?.dispose();
     _dragWordEnd = null;
+    _dragLineBegin?.dispose();
+    _dragLineBegin = null;
+    _dragLineEnd?.dispose();
+    _dragLineEnd = null;
   }
 
   @override
@@ -268,20 +278,41 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     _endSelectionGesture();
   }
 
-  void onDragStart(DragStartDetails details) {
+  /// [seance fork] The drag's granularity follows the press it grew out of:
+  /// a plain mouse drag selects characters, a drag from the second click of
+  /// a double-click extends by words, from the third click by whole lines —
+  /// the standard double/triple-click-drag idiom. Touch pans always select
+  /// by words (the pre-existing behavior). The count comes from the raw
+  /// pointer layer, so it is right even when the drag started inside the tap
+  /// recognizer's deadline and no double/triple tap-down ever fired — in
+  /// that case the initial word/line selection happens here instead.
+  void onDragStart(DragStartDetails details, int tapCount) {
     _disposeDragAnchors();
     _lastDragLocalPosition = details.localPosition;
 
-    if (details.kind == PointerDeviceKind.mouse) {
+    final mouse = details.kind == PointerDeviceKind.mouse;
+    if (mouse && tapCount <= 1) {
       _dragStartAnchor = renderTerminal.createAnchorAt(details.localPosition);
       renderTerminal.selectCharacters(details.localPosition);
+    } else if (mouse && tapCount >= 3) {
+      // Unlike a word, a line always exists under the pointer.
+      final anchors = renderTerminal.createLineAnchorsAt(details.localPosition);
+      _dragLineBegin = anchors.$1;
+      _dragLineEnd = anchors.$2;
+      renderTerminal.selectLine(details.localPosition);
     } else {
       final anchors = renderTerminal.createWordAnchorsAt(details.localPosition);
       if (anchors != null) {
         _dragWordBegin = anchors.$1;
         _dragWordEnd = anchors.$2;
+        renderTerminal.selectWord(details.localPosition);
+      } else {
+        // No word under the origin — a separator or empty cell returns no
+        // boundary. Fall back to a character drag rather than leaving the
+        // whole gesture inert.
+        _dragStartAnchor = renderTerminal.createAnchorAt(details.localPosition);
+        renderTerminal.selectCharacters(details.localPosition);
       }
-      renderTerminal.selectWord(details.localPosition);
     }
   }
 
@@ -309,6 +340,12 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
     final start = _dragStartAnchor;
     if (start != null) {
       renderTerminal.selectCharactersTo(start, localPosition);
+      return;
+    }
+    final lineBegin = _dragLineBegin;
+    final lineEnd = _dragLineEnd;
+    if (lineBegin != null && lineEnd != null) {
+      renderTerminal.selectLineTo(lineBegin, lineEnd, localPosition);
       return;
     }
     final begin = _dragWordBegin;

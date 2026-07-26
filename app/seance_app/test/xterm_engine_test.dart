@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:seance_app/services/xterm_engine.dart';
+import 'package:xterm/xterm.dart';
 
 void main() {
   test(
@@ -311,6 +312,47 @@ void main() {
       e.sendKey([0x0d]);
       expect(e.activeCommand.value, isNull);
       await e.dispose();
+    });
+  });
+
+  group('terminal platform', () {
+    // Regression: the engine used to construct Terminal without `platform:`,
+    // leaving TerminalTargetPlatform.unknown — which xterm's input handlers
+    // treat as "Alt sends Meta". On macOS that consumed Option chords before
+    // the IME could compose them, making ~ (Option-N on Swiss layouts) and
+    // every other Option-composed character untypeable.
+    test('the engine tells the terminal what platform it is on', () {
+      expect(
+        XtermTerminalEngine.detectPlatform(platform: TargetPlatform.macOS),
+        TerminalTargetPlatform.macos,
+      );
+      expect(
+        XtermTerminalEngine.detectPlatform(platform: TargetPlatform.linux),
+        TerminalTargetPlatform.linux,
+      );
+      expect(
+        XtermTerminalEngine.detectPlatform(
+          platform: TargetPlatform.android,
+          isWeb: true,
+        ),
+        TerminalTargetPlatform.web,
+      );
+      final e = XtermTerminalEngine();
+      expect(e.terminal.platform, isNot(TerminalTargetPlatform.unknown));
+      e.dispose();
+    });
+
+    test('on macOS an Option-modified letter is left to the IME', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final e = XtermTerminalEngine();
+      final sent = <String>[];
+      e.terminal.onOutput = sent.add;
+      // Unconsumed is the contract: the key event must fall through so the
+      // platform IME can turn Option-N into a dead tilde and compose ~.
+      expect(e.terminal.keyInput(TerminalKey.keyN, alt: true), isFalse);
+      expect(sent, isEmpty);
+      e.dispose();
     });
   });
 }

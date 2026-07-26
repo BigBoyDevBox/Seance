@@ -110,11 +110,37 @@ class XtermTerminalEngine implements TerminalEngine {
   /// as its control code (e.g. `c` → 0x03). Consumed after one keystroke.
   final ValueNotifier<bool> ctrlArmed = ValueNotifier<bool>(false);
 
+  /// The platform the terminal reports itself as running on.
+  ///
+  /// Never leave this [TerminalTargetPlatform.unknown]: xterm's input
+  /// handlers gate "Option/Alt sends Meta" on it, and `unknown` takes the
+  /// non-macOS path. On a Mac that turned Option-N into `ESC N` **and marked
+  /// the key event handled**, which starved the IME of the keystroke — so
+  /// dead keys never composed and every Option-composed character on
+  /// international layouts (`~` on Swiss Option-N, `@` on German Option-G, …)
+  /// was untypeable. The stray `ESC N` then put remote readline into its
+  /// non-incremental history search, whose prompt renders as `:` — the
+  /// "types a colon" symptom.
+  static TerminalTargetPlatform detectPlatform({
+    TargetPlatform? platform,
+    bool isWeb = kIsWeb,
+  }) {
+    if (isWeb) return TerminalTargetPlatform.web;
+    return switch (platform ?? defaultTargetPlatform) {
+      TargetPlatform.android => TerminalTargetPlatform.android,
+      TargetPlatform.fuchsia => TerminalTargetPlatform.fuchsia,
+      TargetPlatform.iOS => TerminalTargetPlatform.ios,
+      TargetPlatform.linux => TerminalTargetPlatform.linux,
+      TargetPlatform.macOS => TerminalTargetPlatform.macos,
+      TargetPlatform.windows => TerminalTargetPlatform.windows,
+    };
+  }
+
   XtermTerminalEngine({
     int maxLines = 10000,
     TerminalSize? initialSize,
     this.onCommand,
-  }) : terminal = Terminal(maxLines: maxLines),
+  }) : terminal = Terminal(maxLines: maxLines, platform: detectPlatform()),
        _size = initialSize ?? const TerminalSize(80, 24) {
     _terminalDecoder = const Utf8Decoder(
       allowMalformed: true,

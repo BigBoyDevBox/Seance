@@ -159,9 +159,90 @@ what must be preserved.
     while `_scrollOffset <= 0` so it cannot fight BouncingScrollPhysics'
     rubber-banding at the top.
 
+### Input round (Option dead keys, multi-click drags)
+
+22. **Option/Alt composes on Apple platforms** (`core/input/handler.dart`
+    `#AltInputHandler`, `terminal.dart#charInput`; regressions:
+    `test/src/core/input/handler_test.dart`): the alt-sends-Meta guard now
+    covers `ios` as well as `macos` — iPad hardware keyboards compose with
+    Option exactly like a Mac. On Apple platforms an alt-modified letter
+    falls through **unconsumed**, which is what lets the OS IME run the
+    dead-key composition (`~` is Option-N on Swiss layouts; `@` is Option-G
+    on German ones). Consuming it emitted `ESC N` instead and — because the
+    key event was marked handled — the composition never started. (The `:`
+    users saw was remote readline: `M-n`/`M-N` open its non-incremental
+    history search, whose prompt character is `:`.) Note the app must pass
+    `platform:` when constructing `Terminal` — the default `unknown` takes
+    the non-Apple path; see App-layer notes.
+
+    Two deliberate knock-on effects of a real platform reaching the keytab:
+    - **Option-Arrow word-jumps on Apple platforms**: the keytab's `+Mac`
+      records now match, so Option-Right/Left send `ESC f`/`ESC b` (what
+      Terminal.app and iTerm2 send) instead of the ctrl-arrow encoding
+      `CSI 1;5C/D`. Regression-tested in `handler_test.dart`. A remote vim
+      user who relied on the old (unintended) ctrl-arrow encoding will see
+      native-Mac behavior instead.
+    - The keytab's `macos:` flag counts `ios` as Mac too — an iPad hardware
+      keyboard is an Apple keyboard, consistent with the two gates above.
+
+23. **Alt-as-Meta sends the lowercase letter**
+    (`core/input/handler.dart#AltInputHandler`, `terminal.dart#charInput`):
+    alt+n now emits `ESC n`, matching xterm and Konsole. Upstream emitted
+    the uppercase letter unconditionally, which remote readline binds
+    differently (`M-n` is history search; `M-N` is unbound).
+
+24. **Double- and triple-click drags extend by words and lines**
+    (`ui/gesture/gesture_detector.dart`, `ui/gesture/gesture_handler.dart`,
+    `ui/render.dart#selectLineTo`/`#createLineAnchorsAt`; regressions:
+    `test/src/ui/selection_gesture_test.dart` "multi-click drag"): a drag
+    now inherits the tap count of the press it grew out of — click-click-
+    drag extends by whole words from the origin word, click-click-click-
+    drag by whole logical lines, matching every native terminal. Two layers
+    were missing:
+    - The press count is now recorded at the **raw pointer layer**
+      (a `Listener` under the recognizers). The tap recognizer reports a
+      tap-down only at its 100ms deadline, so a press that starts moving
+      earlier never registered — and by the time the pan recognizer won the
+      arena, the tap's rejection had already reset the sequence counter.
+      One source of truth now serves taps, deadline-fired holds, and
+      immediate drags alike (and multi-touch chords reset the chain).
+    - `onDragStart` carries that count and picks the drag's granularity:
+      ≤1 → characters (unchanged), 2 → the existing word-anchor machinery,
+      ≥3 → new line anchors + `selectLineTo`, which follows soft-wrap
+      continuations exactly like triple-click `selectLine`. When the drag
+      began inside the tap deadline (no `onDoubleTapDown` ever fired), the
+      drag start performs the initial word/line selection itself.
+    - The raw layer counts only primary-button presses (chain state keyed by
+      pointer id): right/middle clicks never fed the old recognizer-based
+      counter, so they must neither advance nor reset the chain — else
+      click, right-click, click read as a triple. Multi-touch chords still
+      reset it.
+    - A word-drag whose origin has no word (blank line, the void past the
+      end of text — `getWordBoundary` returns null there) falls back to a
+      character drag instead of leaving the whole gesture inert.
+
+25. **`trimStart` does the same anchor/index bookkeeping as eviction**
+    (`utils/circular_buffer.dart#trimStart`; regressions:
+    `circular_buffer_test.dart`, `selection_gesture_test.dart` "CSI 3J"):
+    the one trim path patches 8/9 never covered. `Buffer.clearScrollback`
+    (CSI 3J — what the remote `clear` command emits) reaches it, and
+    upstream's implementation only moved the ring's start index: trimmed
+    lines stayed attached (so `ownsAnchor` guards passed on anchors whose
+    rows no longer existed → RangeError from the next selection op), every
+    surviving line's `index` went stale by the trimmed count (so even
+    freshly created anchors were wrong for the rest of the session), and
+    `absoluteStartIndex` never advanced (so the viewport was never told how
+    much content vanished). It now migrates trimmed lines' anchors to the
+    first survivor, detaches the trimmed slots, and advances
+    `absoluteStartIndex` — exactly like a ring-buffer eviction.
+
 ### App-layer notes (outside this package)
 
 - The app passes `shortcuts: {}` and instead routes ⌘C/⌘V/⌘A on
   macOS/iPadOS and Ctrl+Shift+C/V/A elsewhere through its own key handler —
   plain Ctrl+A/Ctrl+V flow to the shell (readline line-home / literal ^V).
+- The app constructs `Terminal(platform: ...)` from the host OS
+  (`XtermTerminalEngine.detectPlatform`). Leaving the default
+  `TerminalTargetPlatform.unknown` re-introduces the Option-dead-key bug of
+  patch 22 — `unknown` takes the non-Apple, alt-sends-Meta path.
 

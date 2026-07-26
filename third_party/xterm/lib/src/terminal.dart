@@ -289,10 +289,16 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
       }
     }
 
-    if (alt && platform != TerminalTargetPlatform.macos) {
+    // [seance fork] Apple platforms compose characters with Option — see
+    // AltInputHandler. Same gate here.
+    if (alt &&
+        platform != TerminalTargetPlatform.macos &&
+        platform != TerminalTargetPlatform.ios) {
       if (charCode >= Ascii.a && charCode <= Ascii.z) {
-        final code = charCode - Ascii.a + 65;
-        final input = [0x1b, code];
+        // [seance fork] ESC + the character as typed, matching xterm/Konsole
+        // (alt+n is ESC n). Upstream uppercased it, which remote readline
+        // binds differently.
+        final input = [0x1b, charCode];
         onOutput?.call(String.fromCharCodes(input));
         return true;
       }

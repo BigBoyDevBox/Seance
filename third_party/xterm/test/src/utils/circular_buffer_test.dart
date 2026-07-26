@@ -315,6 +315,21 @@ void main() {
       expect(cl[4], 9.indexed);
     });
 
+    test("trim start advances the absolute index and keeps items indexed", () {
+      final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
+      cl.pushAll(
+        List<int>.generate(10, (index) => index).map(IndexedValue.new),
+      );
+      // Pre-fix, trimStart left absoluteStartIndex behind, so every
+      // surviving item's index (absoluteIndex - absoluteStartIndex) went
+      // stale by the trimmed count — CSI 3J corrupted all selection
+      // anchoring for the rest of the session.
+      cl.trimStart(4);
+      expect(cl.absoluteStartIndex, 4);
+      expect(cl[0].index, 0);
+      expect(cl[5].index, 5);
+    });
+
     test("trim start with more than length works", () {
       final cl = IndexAwareCircularBuffer<IndexedValue<int>>(10);
       cl.pushAll(
