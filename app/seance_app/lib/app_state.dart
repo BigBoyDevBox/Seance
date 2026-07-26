@@ -17,6 +17,24 @@ import 'ui/terminal_appearance.dart';
 /// server list (green / grey / red, with a spinner while connecting).
 enum TerminalStatus { connecting, connected, disconnected, error }
 
+/// What the remote shell has told us about a session: the OSC 7 working
+/// directory and the OSC 0/2 terminal title. Used to name the session's tab.
+@immutable
+class SessionMetadata {
+  final String? workingDirectory;
+  final String? terminalTitle;
+  const SessionMetadata({this.workingDirectory, this.terminalTitle});
+
+  @override
+  bool operator ==(Object other) =>
+      other is SessionMetadata &&
+      other.workingDirectory == workingDirectory &&
+      other.terminalTitle == terminalTitle;
+
+  @override
+  int get hashCode => Object.hash(workingDirectory, terminalTitle);
+}
+
 /// Repaint signal for one session's connection log.
 ///
 /// dartssh2 calls `printTrace` per packet, so a handshake appends hundreds of
@@ -63,6 +81,15 @@ class TerminalSession {
   /// the native macOS Edit menu can copy from the active session.
   TerminalController? controller;
 
+  /// The session's shell-reported identity, mirrored off the engine.
+  ///
+  /// Owned by the session rather than read from the engine directly, because
+  /// the engine (and its notifiers) is disposed when the connection drops
+  /// while the *tab* lives on — the strip must keep naming a disconnected tab
+  /// by where it last was. Its own notifier also means a new title repaints
+  /// the tab strip alone instead of the whole app.
+  final ValueNotifier<SessionMetadata> metadata;
+
   TerminalSession({
     required this.id,
     String? editSessionId,
@@ -71,8 +98,44 @@ class TerminalSession {
     required this.engine,
     this.connecting = true,
     this.error,
-  }) : editSessionId = editSessionId ?? id {
+    SessionMetadata initialMetadata = const SessionMetadata(),
+  }) : editSessionId = editSessionId ?? id,
+       metadata = ValueNotifier<SessionMetadata>(initialMetadata) {
     log = SshConnectionLog(onUpdate: logNotifier.bump);
+    engine.workingDirectory.addListener(_syncMetadata);
+    engine.terminalTitle.addListener(_syncMetadata);
+  }
+
+  void _syncMetadata() {
+    metadata.value = SessionMetadata(
+      // Keep the last known values: a shell that stops reporting — or clears
+      // its title with an empty OSC 2, which is a common way to reset it —
+      // should not blank the tab back to "Session N" mid-session.
+      workingDirectory: _keepLast(
+        engine.workingDirectory.value,
+        metadata.value.workingDirectory,
+      ),
+      terminalTitle: _keepLast(
+        engine.terminalTitle.value,
+        metadata.value.terminalTitle,
+      ),
+    );
+  }
+
+  static String? _keepLast(String? reported, String? previous) =>
+      (reported == null || reported.isEmpty) ? previous : reported;
+
+  /// Release what the session owns beyond its engine and SSH connection.
+  ///
+  /// The engine's own disposal already drops these listeners along with the
+  /// notifiers they are attached to, so the explicit removal is belt and
+  /// braces — it makes the ordering invariant local instead of something a
+  /// reader has to infer from `XtermTerminalEngine.dispose`. Removing a
+  /// listener from an already-disposed notifier is explicitly supported.
+  void dispose() {
+    engine.workingDirectory.removeListener(_syncMetadata);
+    engine.terminalTitle.removeListener(_syncMetadata);
+    metadata.dispose();
   }
 
   bool get isConnected => session != null && !session!.isClosed;
@@ -452,6 +515,9 @@ class AppState extends ChangeNotifier {
       serverId: old.serverId,
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
+      // Carry the shell-reported identity across the reconnect so the tab
+      // keeps its name instead of flickering back to "Session N".
+      initialMetadata: old.metadata.value,
     );
     sessions[index] = replacement;
     if (activeSessionId == old.id) _setActive(replacement.id);
@@ -509,6 +575,9 @@ class AppState extends ChangeNotifier {
     } finally {
       tab.logNotifier.dispose();
     }
+    // Only here, not in disconnect(): a disconnected tab stays in the strip and
+    // keeps showing where it last was.
+    tab.dispose();
   }
 
   /// Seed the built-in snippets on first launch only (guarded by a persisted

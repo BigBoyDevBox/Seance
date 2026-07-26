@@ -7,10 +7,13 @@ import 'package:xterm/xterm.dart';
 
 import '../app_state.dart';
 import '../main.dart';
+import '../services/xterm_engine.dart';
 import '../theme.dart';
 import 'app_menus.dart';
 import 'command_generator.dart';
 import 'files_pane.dart';
+import 'middle_ellipsis_text.dart';
+import 'session_label.dart';
 import 'sidebar_panel.dart';
 import 'terminal_appearance.dart';
 import 'terminal_keyboard_bar.dart';
@@ -75,6 +78,7 @@ class TerminalPane extends StatelessWidget {
                   onGenerateCommand: () => openCommandGenerator(state),
                 ),
               Expanded(child: _body(state)),
+              if (active != null) SessionStatusBar(session: active),
               if (showKeyRow) TerminalKeyboardBar(engine: active.engine),
             ],
           ),
@@ -231,9 +235,10 @@ class TerminalTabStrip extends StatelessWidget {
                 children: [
                   for (var i = 0; i < tabs.length; i++)
                     _TabChip(
-                      // 1-based ordinal within the server; no OSC title yet.
-                      label: 'Session ${i + 1}',
-                      status: tabs[i].status,
+                      // 1-based ordinal within the server, used only as the
+                      // fallback name when the shell reports nothing.
+                      ordinal: i + 1,
+                      session: tabs[i],
                       selected: tabs[i].id == activeSessionId,
                       onTap: () => onFocus(tabs[i].id),
                       onClose: () => onClose(tabs[i].id),
@@ -272,16 +277,19 @@ class TerminalTabStrip extends StatelessWidget {
   }
 }
 
+/// One tab in the strip. Its name follows the session's shell-reported
+/// identity, so it rebuilds on the session's own metadata notifier rather than
+/// on app-wide state.
 class _TabChip extends StatelessWidget {
-  final String label;
-  final TerminalStatus status;
+  final int ordinal;
+  final TerminalSession session;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onClose;
 
   const _TabChip({
-    required this.label,
-    required this.status,
+    required this.ordinal,
+    required this.session,
     required this.selected,
     required this.onTap,
     required this.onClose,
@@ -290,47 +298,136 @@ class _TabChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final config = session.config;
     // Middle-click closes, matching browser/terminal tab conventions.
     return GestureDetector(
       onTertiaryTapUp: (_) => onClose(),
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: 38,
-          padding: const EdgeInsets.only(left: 12, right: 4),
-          decoration: BoxDecoration(
-            color: selected ? scheme.surface : Colors.transparent,
-            border: Border(
-              bottom: BorderSide(
-                color: selected ? scheme.primary : Colors.transparent,
-                width: 2,
+      child: ValueListenableBuilder<SessionMetadata>(
+        valueListenable: session.metadata,
+        builder: (context, metadata, _) => Tooltip(
+          message: sessionTabTooltip(
+            ordinal: ordinal,
+            target:
+                '${config.username}@${config.host}:${config.port}',
+            workingDirectory: metadata.workingDirectory,
+            terminalTitle: metadata.terminalTitle,
+          ),
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              height: 38,
+              padding: const EdgeInsets.only(left: 12, right: 4),
+              decoration: BoxDecoration(
+                color: selected ? scheme.surface : Colors.transparent,
+                border: Border(
+                  bottom: BorderSide(
+                    color: selected ? scheme.primary : Colors.transparent,
+                    width: 2,
+                  ),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _TabStatusDot(status: session.status),
+                  const SizedBox(width: 6),
+                  Text(
+                    sessionTabLabel(
+                      ordinal: ordinal,
+                      workingDirectory: metadata.workingDirectory,
+                      terminalTitle: metadata.terminalTitle,
+                    ),
+                    style: TextStyle(
+                      fontWeight: selected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  IconButton(
+                    tooltip: 'Close tab',
+                    iconSize: 15,
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
+                    icon: const Icon(Icons.close),
+                    onPressed: onClose,
+                  ),
+                ],
               ),
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _TabStatusDot(status: status),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                ),
-              ),
-              const SizedBox(width: 2),
-              IconButton(
-                tooltip: 'Close tab',
-                iconSize: 15,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                icon: const Icon(Icons.close),
-                onPressed: onClose,
-              ),
-            ],
-          ),
         ),
+      ),
+    );
+  }
+}
+
+/// A slim footer naming the machine the keystrokes are going to, plus where on
+/// it the shell currently is and how the last command exited.
+///
+/// In the wide layout the terminal pane has no app bar at all, so before this
+/// the only clue to *which host you are typing into* was the highlighted row
+/// in the server list.
+class SessionStatusBar extends StatelessWidget {
+  final TerminalSession session;
+  const SessionStatusBar({super.key, required this.session});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final config = session.config;
+    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: scheme.onSurfaceVariant,
+      fontFamily: 'monospace',
+    );
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        border: Border(top: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: Row(
+        children: [
+          _TabStatusDot(status: session.status),
+          const SizedBox(width: 8),
+          Text(
+            '${config.username}@${config.host}:${config.port}',
+            style: style,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: ValueListenableBuilder<SessionMetadata>(
+              valueListenable: session.metadata,
+              builder: (context, metadata, _) {
+                final cwd = metadata.workingDirectory;
+                if (cwd == null) return const SizedBox.shrink();
+                return MiddleEllipsisText(sanitizeRemoteLabel(cwd), style: style);
+              },
+            ),
+          ),
+          // The exit code comes from the live engine's OSC 133 state, so it is
+          // only shown while the engine exists (a closed session disposes it).
+          if (session.isConnected)
+            ValueListenableBuilder<ShellIntegrationState>(
+              valueListenable: session.engine.shellIntegration,
+              builder: (context, shell, _) {
+                final code = shell.lastExitCode;
+                if (code == null || code == 0) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Text(
+                    'exit $code',
+                    style: style?.copyWith(color: scheme.error),
+                  ),
+                );
+              },
+            ),
+        ],
       ),
     );
   }
