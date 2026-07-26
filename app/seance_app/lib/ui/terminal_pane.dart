@@ -345,6 +345,8 @@ class _RenameTabDialog extends StatefulWidget {
 }
 
 class _RenameTabDialogState extends State<_RenameTabDialog> {
+  // `late` matters: the initializer reads `widget`, which the framework only
+  // wires up after construction, so this must not be evaluated eagerly.
   late final TextEditingController _controller = TextEditingController(
     text: widget.currentName ?? '',
   )..selection = TextSelection(
@@ -426,7 +428,10 @@ class _TabChip extends StatelessWidget {
   }
 
   Future<void> _showMenu(BuildContext context, Offset globalPosition) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    // Positioning needs the overlay's box; give up rather than crash if the
+    // chip is being torn down as the menu opens.
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
     final metadata = session.metadata.value;
     final config = session.config;
     final choice = await showMenu<String>(
@@ -442,6 +447,9 @@ class _TabChip extends StatelessWidget {
         // to show it any other way, and this is the gesture that used to.
         PopupMenuItem(
           enabled: false,
+          // height: 0 is the idiom for "size to the child": the default
+          // minimum would leave this multi-line header boxed in a single
+          // row's height.
           height: 0,
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: Text(
