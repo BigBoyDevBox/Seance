@@ -141,7 +141,7 @@ void main() {
           runningCommand: 'rsync -avz --progress ./build deploy@web:/srv',
           maxLength: 12,
         ),
-        'rsync -avz \u2026',
+        'rsync -avz\u2026',
       );
     });
 

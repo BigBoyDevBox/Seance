@@ -40,7 +40,9 @@ String shortenLabelHead(String value, int maxLength) {
   if (graphemes.length <= maxLength) return value;
   final keep = maxLength - 1;
   if (keep <= 0) return _ellipsis;
-  return '$_ellipsis${graphemes.skip(graphemes.length - keep).join()}';
+  // Trimmed so a cut at a word boundary doesn't strand a space against the
+  // ellipsis (`… foo` → `…foo`).
+  return '$_ellipsis${graphemes.skip(graphemes.length - keep).join().trimLeft()}';
 }
 
 /// Shorten [value] to [maxLength] grapheme clusters, ellipsising the *end* —
@@ -51,7 +53,9 @@ String shortenLabelTail(String value, int maxLength) {
   if (graphemes.length <= maxLength) return value;
   final keep = maxLength - 1;
   if (keep <= 0) return _ellipsis;
-  return '${graphemes.take(keep).join()}$_ellipsis';
+  // Trimmed so a cut at an argument boundary doesn't strand a space against
+  // the ellipsis (`rsync -avz …` → `rsync -avz…`).
+  return '${graphemes.take(keep).join().trimRight()}$_ellipsis';
 }
 
 /// The last segment of an absolute POSIX [path], or `/` for the root itself.
