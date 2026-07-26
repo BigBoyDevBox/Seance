@@ -6,10 +6,12 @@ import 'package:xterm/xterm.dart' show TerminalController;
 
 import 'services/app_services.dart';
 import 'services/app_settings.dart';
+import 'services/chat_session.dart';
 import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
 import 'services/remote_files_controller.dart';
 import 'services/xterm_engine.dart';
+import 'ui/terminal_appearance.dart';
 
 /// Connection state of a server's terminal, mirrored by the status dot in the
 /// server list (green / grey / red, with a spinner while connecting).
@@ -33,6 +35,19 @@ class SessionMetadata {
   int get hashCode => Object.hash(workingDirectory, terminalTitle);
 }
 
+/// Repaint signal for one session's connection log.
+///
+/// dartssh2 calls `printTrace` per packet, so a handshake appends hundreds of
+/// lines. Routing those into [AppState.notifyListeners] rebuilt the server
+/// list, every mounted terminal, and the utility panel once per trace line —
+/// a burst of full-tree rebuilds during exactly the moment the user is already
+/// waiting on a connection. Giving the log its own notifier means only the
+/// widget that displays it repaints, and while the pane is showing the
+/// connecting spinner there is no listener at all.
+class ConnectionLogNotifier extends ChangeNotifier {
+  void bump() => notifyListeners();
+}
+
 /// One terminal session — a single SSH connection. A server can have several
 /// (shown as tabs inside its terminal pane), so a session has its own [id]
 /// distinct from its [serverId]; many sessions can share one [serverId].
@@ -53,8 +68,13 @@ class TerminalSession {
   String? error;
 
   /// Live transcript of the current/last connection attempt, shown in the
-  /// "connection log" details when a connection fails.
-  SshConnectionLog log;
+  /// "connection log" details when a connection fails. Owned by the session so
+  /// its trace lines drive [logNotifier] rather than the whole app.
+  late final SshConnectionLog log;
+
+  /// Repaints the connection-log view as lines arrive. See
+  /// [ConnectionLogNotifier].
+  final ConnectionLogNotifier logNotifier = ConnectionLogNotifier();
 
   /// The xterm selection controller for this session's terminal. Set by the
   /// live [_SessionView] widget while it's mounted (and cleared on dispose), so
@@ -76,12 +96,12 @@ class TerminalSession {
     required this.serverId,
     required this.config,
     required this.engine,
-    required this.log,
     this.connecting = true,
     this.error,
     SessionMetadata initialMetadata = const SessionMetadata(),
   }) : editSessionId = editSessionId ?? id,
        metadata = ValueNotifier<SessionMetadata>(initialMetadata) {
+    log = SshConnectionLog(onUpdate: logNotifier.bump);
     engine.workingDirectory.addListener(_syncMetadata);
     engine.terminalTitle.addListener(_syncMetadata);
   }
@@ -186,6 +206,11 @@ class AppState extends ChangeNotifier {
   final SecretRedactor _redactor = SecretRedactor();
   Timer? _statsSaveDebounce;
 
+  /// The assistant conversation. Lives here rather than in the sidebar widget
+  /// so it survives the drawer closing on narrow layouts, and the pane being
+  /// rebuilt when the layout crosses the wide/narrow breakpoint.
+  final ChatSession chat = ChatSession();
+
   /// UI-supplied interaction hooks (wired by the root widget so dialogs can be
   /// shown). Default to a safe "deny" if the UI hasn't set them yet.
   HostKeyPrompter? hostKeyPrompter;
@@ -260,6 +285,12 @@ class AppState extends ChangeNotifier {
     snippets = await services.snippetStore.listSnippets();
     await refreshLlmConfigured();
     _recomputeSuggestions();
+    // Skip hosts that already hold a live session: they are demonstrably
+    // reachable, and probing them only adds an sshd log line every sweep.
+    services.probe.connectedServerIds = () => {
+      for (final session in sessions)
+        if (session.isConnected) session.serverId,
+    };
     _probeSub = services.probe.statuses.listen((s) {
       statuses = s;
       notifyListeners();
@@ -386,7 +417,6 @@ class AppState extends ChangeNotifier {
       serverId: config.id,
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
-      log: SshConnectionLog(onUpdate: notifyListeners),
     );
     sessions.insert(insertIndexFor(sessions, config.id), tab);
     _setActive(tab.id);
@@ -485,7 +515,6 @@ class AppState extends ChangeNotifier {
       serverId: old.serverId,
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
-      log: SshConnectionLog(onUpdate: notifyListeners),
       // Carry the shell-reported identity across the reconnect so the tab
       // keeps its name instead of flickering back to "Session N".
       initialMetadata: old.metadata.value,
@@ -532,10 +561,19 @@ class AppState extends ChangeNotifier {
       }
       tab.retainedLocalCopies.clear();
     }
-    if (tab.session != null) {
-      await tab.session!.close(); // SshSession.close disposes the engine
-    } else {
-      await tab.engine.dispose();
+    // Sever the log's callback before anything async begins: a trace line
+    // arriving during (or after) teardown would otherwise reach a notifier
+    // that is about to be disposed, which asserts. Freezing also stops the
+    // transcript growing while the transport closes.
+    tab.log.freeze();
+    try {
+      if (tab.session != null) {
+        await tab.session!.close(); // SshSession.close disposes the engine
+      } else {
+        await tab.engine.dispose();
+      }
+    } finally {
+      tab.logNotifier.dispose();
     }
     // Only here, not in disconnect(): a disconnected tab stays in the strip and
     // keeps showing where it last was.
@@ -789,6 +827,28 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // --- Terminal appearance ---
+
+  /// Change the terminal font size by [delta] points (the ⌘+ / ⌘− shortcuts),
+  /// or reset it to the default when [delta] is null (⌘0). Clamped to the
+  /// supported range; a no-op change neither notifies nor writes to disk.
+  Future<void> zoomTerminal(double? delta) async {
+    final settings = services.settings;
+    final next = clampTerminalFontSize(
+      delta == null
+          ? kDefaultTerminalFontSize
+          : settings.terminalFontSize + delta,
+    );
+    if (next == settings.terminalFontSize) return;
+    settings.terminalFontSize = next;
+    notifyListeners();
+    await services.saveSettings();
+  }
+
+  /// Repaint live terminals after the appearance settings changed in place
+  /// (the settings screen owns the write; this only refreshes the views).
+  void terminalAppearanceChanged() => notifyListeners();
+
   /// Dismiss the update affordance for this session (a fresh launch re-checks).
   void dismissUpdateNotice() {
     if (updateInfo == null) return;
@@ -929,7 +989,6 @@ class AppState extends ChangeNotifier {
         serverId: config.id,
         config: config,
         engine: XtermTerminalEngine(onCommand: _recordCommand),
-        log: SshConnectionLog(onUpdate: notifyListeners),
         connecting: false,
       );
       tab.retainedLocalCopies.addEntries(
@@ -946,10 +1005,25 @@ class AppState extends ChangeNotifier {
     _autoSyncTimer?.cancel();
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
+    chat.dispose();
+    // Drop the callback before the service goes: it closes over `sessions`,
+    // so a probe service that outlived this state would keep reading a list
+    // that is no longer maintained (and keep this object alive).
+    services.probe.connectedServerIds = null;
     services.probe.dispose();
     for (final t in sessions) {
-      _disposeSession(t);
+      // Teardown is asynchronous but nothing can await it here: swallow the
+      // failure explicitly rather than leaving an unhandled async error to
+      // surface long after the state object is gone.
+      unawaited(
+        _disposeSession(t).catchError((Object error, StackTrace stack) {
+          debugPrint('Session teardown failed: $error\n$stack');
+        }),
+      );
     }
+    // Teardown is in flight and does not read this list; clearing it makes the
+    // contract explicit — nothing may reach a session after this point.
+    sessions.clear();
     super.dispose();
   }
 }

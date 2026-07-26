@@ -3,7 +3,6 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:seance_core/seance_core.dart';
 import 'package:xterm/xterm.dart';
 
 import '../app_state.dart';
@@ -16,6 +15,7 @@ import 'files_pane.dart';
 import 'middle_ellipsis_text.dart';
 import 'session_label.dart';
 import 'sidebar_panel.dart';
+import 'terminal_appearance.dart';
 import 'terminal_keyboard_bar.dart';
 
 /// Touch platforms get the on-screen key row (Tab/Ctrl/arrows) and need the
@@ -475,6 +475,20 @@ class _SessionView extends StatefulWidget {
 }
 
 class _SessionViewState extends State<_SessionView> {
+  /// Zoom keys. `equal` covers the unshifted key that carries "+" on most
+  /// layouts, and the numpad variants cover the keypad, so ⌘+ works whether or
+  /// not the user reaches for Shift. `static final`, not `const`:
+  /// LogicalKeyboardKey overrides `==`, which a const set may not contain.
+  static final Set<LogicalKeyboardKey> _zoomInKeys = {
+    LogicalKeyboardKey.equal,
+    LogicalKeyboardKey.add,
+    LogicalKeyboardKey.numpadAdd,
+  };
+  static final Set<LogicalKeyboardKey> _zoomOutKeys = {
+    LogicalKeyboardKey.minus,
+    LogicalKeyboardKey.numpadSubtract,
+  };
+
   final FocusNode _focus = FocusNode();
   // Our own controller so the copy/paste menu can read (and set) the selection.
   final TerminalController _terminalController = TerminalController();
@@ -537,24 +551,37 @@ class _SessionViewState extends State<_SessionView> {
     if (!tab.isConnected) {
       return _Disconnected(tab: tab, state: widget.state);
     }
+    final appearance = TerminalAppearance.resolve(
+      widget.state.services.settings,
+      Theme.of(context).brightness,
+    );
     // Click semantics (single/double/triple, shift-click extension, drag
     // anchoring, edge autoscroll) live in the vendored xterm fork — one owner
     // in the gesture arena. The old app-side Listener machine raced xterm's
     // recognizers: its selections were force-cleared ~100ms later.
-    return TerminalView(
-      tab.engine.terminal,
-      controller: _terminalController,
-      focusNode: _focus,
-      autofocus: widget.isActive,
-      onKeyEvent: _handleKeyEvent,
-      // No default shortcut layer: _handleKeyEvent and the menus already
-      // cover copy/paste/select-all, and xterm's defaults hijacked plain
-      // Ctrl+A (readline line-home) into a select-all and ate Ctrl+V before
-      // the shell ever saw it.
-      shortcuts: const <ShortcutActivator, Intent>{},
-      onSecondaryTapDown: (details, _) =>
-          _showContextMenu(context, details.globalPosition),
-      padding: const EdgeInsets.all(6),
+    return ColoredBox(
+      // The padding around the grid is outside xterm's own painted area, so
+      // without this the app surface would frame the terminal in a mismatched
+      // color at every edge.
+      color: appearance.theme.background,
+      child: TerminalView(
+        tab.engine.terminal,
+        controller: _terminalController,
+        focusNode: _focus,
+        autofocus: widget.isActive,
+        onKeyEvent: _handleKeyEvent,
+        textStyle: appearance.style,
+        theme: appearance.theme,
+        keyboardAppearance: appearance.brightness,
+        // No default shortcut layer: _handleKeyEvent and the menus already
+        // cover copy/paste/select-all, and xterm's defaults hijacked plain
+        // Ctrl+A (readline line-home) into a select-all and ate Ctrl+V before
+        // the shell ever saw it.
+        shortcuts: const <ShortcutActivator, Intent>{},
+        onSecondaryTapDown: (details, _) =>
+            _showContextMenu(context, details.globalPosition),
+        padding: const EdgeInsets.all(6),
+      ),
     );
   }
 
@@ -600,6 +627,21 @@ class _SessionViewState extends State<_SessionView> {
     }
     if (clip && event.logicalKey == LogicalKeyboardKey.keyA) {
       terminalSelectAll(widget.tab);
+      return KeyEventResult.handled;
+    }
+    // Zoom (see _zoomInKeys).
+    if (clip && _zoomInKeys.contains(event.logicalKey)) {
+      widget.state.zoomTerminal(kTerminalFontSizeStep);
+      return KeyEventResult.handled;
+    }
+    if (clip && _zoomOutKeys.contains(event.logicalKey)) {
+      widget.state.zoomTerminal(-kTerminalFontSizeStep);
+      return KeyEventResult.handled;
+    }
+    if (clip &&
+        (event.logicalKey == LogicalKeyboardKey.digit0 ||
+            event.logicalKey == LogicalKeyboardKey.numpad0)) {
+      widget.state.zoomTerminal(null);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -674,7 +716,7 @@ class _ConnectionError extends StatelessWidget {
                 label: const Text('Retry'),
               ),
               const SizedBox(height: 12),
-              _ConnectionLogView(log: tab.log),
+              _ConnectionLogView(session: tab),
             ],
           ),
         ),
@@ -719,12 +761,21 @@ class _Disconnected extends StatelessWidget {
 
 /// A collapsible view of the raw connection transcript, with a copy button.
 class _ConnectionLogView extends StatelessWidget {
-  final SshConnectionLog log;
-  const _ConnectionLogView({required this.log});
+  final TerminalSession session;
+  const _ConnectionLogView({required this.session});
 
   @override
   Widget build(BuildContext context) {
-    final text = log.toString();
+    // Listens to the session's own log notifier, not to AppState: a handshake
+    // appends a line per packet, and routing those through the app-wide
+    // notifier rebuilt the entire tree hundreds of times per connection.
+    return ListenableBuilder(
+      listenable: session.logNotifier,
+      builder: (context, _) => _log(context, session.log.toString()),
+    );
+  }
+
+  Widget _log(BuildContext context, String text) {
     final scheme = Theme.of(context).colorScheme;
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),

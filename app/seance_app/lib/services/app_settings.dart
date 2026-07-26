@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:seance_core/seance_core.dart';
 
+import '../ui/terminal_appearance.dart';
 import 'atomic_file.dart';
 import 'external_file_opener.dart';
 
@@ -94,6 +96,15 @@ class AppSettings {
   /// fall back to the server's identity file *path*.
   Map<String, IdentityFileBookmark> identityFileBookmarks;
 
+  /// Terminal appearance. Device-local by design: the right font size depends
+  /// on the screen in front of you, not on the account, so these never sync.
+  double terminalFontSize;
+
+  /// Preferred monospace family for the terminal grid. Empty means "use the
+  /// app's own stack" ([SeanceTheme.monoFallback]).
+  String terminalFontFamily;
+  TerminalPalette terminalPalette;
+
   /// Stable per-device id used in synced records' conflict resolution.
   String deviceId;
 
@@ -119,6 +130,9 @@ class AppSettings {
     Map<String, List<String>>? remotePathBookmarks,
     Map<String, bool>? remoteShowHidden,
     Map<String, IdentityFileBookmark>? identityFileBookmarks,
+    this.terminalFontSize = kDefaultTerminalFontSize,
+    this.terminalFontFamily = '',
+    this.terminalPalette = TerminalPalette.followApp,
     this.deviceId = '',
     this.snippetsSeeded = false,
   }) : editorRegistry = editorRegistry ?? EditorRegistry(),
@@ -150,6 +164,9 @@ class AppSettings {
     'remoteShowHidden': remoteShowHidden,
     'identityFileBookmarks': identityFileBookmarks
         .map((id, entry) => MapEntry(id, entry.toJson())),
+    'terminalFontSize': terminalFontSize,
+    'terminalFontFamily': terminalFontFamily,
+    'terminalPalette': terminalPalette.name,
     'deviceId': deviceId,
     'snippetsSeeded': snippetsSeeded,
   };
@@ -178,9 +195,67 @@ class AppSettings {
     remotePathBookmarks: _bookmarkMap(json['remotePathBookmarks']),
     remoteShowHidden: _boolMap(json['remoteShowHidden']),
     identityFileBookmarks: _identityBookmarkMap(json['identityFileBookmarks']),
+    // Clamped on read: a hand-edited or downgraded settings file must never be
+    // able to render the terminal at an unusable size.
+    terminalFontSize: clampTerminalFontSize(
+      (json['terminalFontSize'] as num?)?.toDouble() ??
+          kDefaultTerminalFontSize,
+    ),
+    terminalFontFamily: json['terminalFontFamily'] as String? ?? '',
+    terminalPalette: TerminalPalette.values.firstWhere(
+      (p) => p.name == json['terminalPalette'],
+      orElse: () => TerminalPalette.followApp,
+    ),
     deviceId: json['deviceId'] as String? ?? '',
     snippetsSeeded: json['snippetsSeeded'] as bool? ?? false,
   );
+}
+
+/// Recover the few fields that are expensive to lose from the raw text of an
+/// unparseable settings file.
+///
+/// [AppSettings.deviceId] matters most: it is the tiebreaker in `Lww.resolve`,
+/// so a device that comes back with a fresh id re-enters sync as a stranger and
+/// its existing records lose their authorship for conflict resolution. The sync
+/// server and username are recovered too, so re-enrolment does not start from a
+/// blank form. Nothing here is trusted beyond its shape — the values are plain
+/// strings that go straight back through the normal accessors.
+AppSettings salvageSettings(String? raw) {
+  final settings = AppSettings();
+  if (raw == null) return settings;
+  /// Best effort on a document that cannot be parsed. The key must sit where a
+  /// key can sit — at the start, or after a `{` or `,` — which keeps the name
+  /// from being picked up out of the middle of some other string's contents.
+  /// It still cannot tell nesting apart (a `{"editors":{"deviceId":…}}` looks
+  /// identical to the real thing), and a wrong salvage stays bounded by being
+  /// a string that goes back through the normal accessors.
+  String? field(String name) {
+    final match = RegExp(
+      '(?:^|[,{])\\s*"$name"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"',
+    ).firstMatch(raw);
+    final value = match?.group(1);
+    if (value == null) return null;
+    try {
+      // The capture is still JSON-escaped. Decode it as a JSON string so an
+      // escaped quote or backslash survives rather than truncating the value —
+      // a half-salvaged deviceId would defeat the point of salvaging at all.
+      return jsonDecode('"$value"') as String;
+    } catch (_) {
+      return value;
+    }
+  }
+
+  final deviceId = field('deviceId');
+  if (deviceId != null && deviceId.isNotEmpty) settings.deviceId = deviceId;
+  final syncBaseUrl = field('syncBaseUrl');
+  if (syncBaseUrl != null && syncBaseUrl.isNotEmpty) {
+    settings.syncBaseUrl = syncBaseUrl;
+  }
+  final syncUsername = field('syncUsername');
+  if (syncUsername != null && syncUsername.isNotEmpty) {
+    settings.syncUsername = syncUsername;
+  }
+  return settings;
 }
 
 Map<String, IdentityFileBookmark> _identityBookmarkMap(Object? value) {
@@ -223,16 +298,50 @@ Map<String, List<String>> _bookmarkMap(Object? value) {
 class SettingsStore {
   final File file;
   Future<void> _saveTail = Future<void>.value();
+
+  bool _recoveredFromCorruptFile = false;
+
+  /// True when [load] could not parse the settings file and started from
+  /// defaults. The bad file is moved aside rather than overwritten, and the app
+  /// says so — silently resetting the sync server, the provider configuration
+  /// and the editor registry is not something the user should have to discover.
+  bool get recoveredFromCorruptFile => _recoveredFromCorruptFile;
+
   SettingsStore(this.file);
 
   Future<AppSettings> load() async {
     if (!await file.exists()) return AppSettings();
+    String? raw;
     try {
-      return AppSettings.fromJson(
-        jsonDecode(await file.readAsString()) as Map<String, dynamic>,
-      );
+      raw = await file.readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('settings root is not an object');
+      }
+      return AppSettings.fromJson(decoded);
     } catch (_) {
-      return AppSettings();
+      // Every other JSON store in the app quarantines an unreadable file; this
+      // one used to overwrite it with defaults on the next save, which made the
+      // loss permanent and unrecoverable.
+      _recoveredFromCorruptFile = true;
+      final salvaged = salvageSettings(raw);
+      try {
+        await quarantineCorruptFile(file);
+        // Write the salvage back immediately, through the same atomic path as
+        // any other save. Without this it would live only in memory: the bad
+        // file has been moved aside, so the next launch would find nothing,
+        // fall back to defaults, and mint the fresh deviceId this is here to
+        // avoid.
+        await save(salvaged);
+      } catch (error) {
+        // Recovering is best effort. A read-only or full disk must not turn an
+        // unreadable settings file into a failed launch — the app runs on the
+        // salvaged values and tries again next time. Logged rather than
+        // swallowed outright: if it keeps failing, the recovery notice will
+        // reappear every launch and this says why.
+        debugPrint('Settings recovery could not be written back: $error');
+      }
+      return salvaged;
     }
   }
 
