@@ -5,6 +5,7 @@ import '../app_state.dart';
 import '../main.dart';
 import '../services/external_file_opener.dart';
 import 'sync_enrollment_validation.dart';
+import 'terminal_appearance.dart';
 
 /// Settings: LLM provider (the assistant is always on — this only picks which
 /// model), the web-search backend, secret redaction, and sync enrolment.
@@ -37,6 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _commandSuggestions;
   late bool _checkForUpdates;
   late EditorRegistry _editorRegistry;
+  late double _terminalFontSize;
+  late TerminalPalette _terminalPalette;
+  final _terminalFont = TextEditingController();
   SyncEnrollmentMode _syncMode = SyncEnrollmentMode.login;
   bool _saving = false;
   String? _syncStatus;
@@ -69,6 +73,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _commandSuggestions = s.commandSuggestions;
     _checkForUpdates = s.checkForUpdates;
     _editorRegistry = s.editorRegistry;
+    _terminalFontSize = clampTerminalFontSize(s.terminalFontSize);
+    _terminalPalette = s.terminalPalette;
+    _terminalFont.text = s.terminalFontFamily;
     _syncUrl.text = s.syncBaseUrl ?? '';
     _syncUser.text = s.syncUsername ?? '';
   }
@@ -85,6 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _syncPassword,
       _syncEncryptionPassphrase,
       _syncEncryptionPassphraseConfirm,
+      _terminalFont,
     ]) {
       c.dispose();
     }
@@ -284,6 +292,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onChanged: (value) {
           setState(() => _checkForUpdates = value);
           _persistCheckForUpdates(state);
+        },
+      ),
+      const Divider(height: 40),
+      _section(
+        'Terminal',
+        helpTitle: 'Terminal appearance',
+        help:
+            'Font size, family, and colors apply to every session on this '
+            'device. With the terminal focused you can zoom without opening '
+            'Settings: ⌘ with +, − or 0 on macOS and iPadOS, Ctrl+Shift with '
+            'the same keys elsewhere (plain Ctrl chords belong to the shell). '
+            'Leave the font family blank to use Séance’s bundled monospace '
+            'stack.',
+      ),
+      Row(
+        children: [
+          Expanded(
+            child: Slider(
+              min: kMinTerminalFontSize,
+              max: kMaxTerminalFontSize,
+              divisions:
+                  ((kMaxTerminalFontSize - kMinTerminalFontSize) /
+                          kTerminalFontSizeStep)
+                      .round(),
+              value: _terminalFontSize,
+              label: '${_terminalFontSize.round()} pt',
+              onChanged: (value) =>
+                  setState(() => _terminalFontSize = clampTerminalFontSize(value)),
+              onChangeEnd: (_) => _persistTerminalAppearance(state),
+            ),
+          ),
+          SizedBox(
+            width: 56,
+            child: Text(
+              '${_terminalFontSize.round()} pt',
+              textAlign: TextAlign.end,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+      TextField(
+        controller: _terminalFont,
+        decoration: const InputDecoration(
+          labelText: 'Font family (optional)',
+          hintText: 'e.g. JetBrains Mono — blank uses the built-in stack',
+        ),
+        onSubmitted: (_) => _persistTerminalAppearance(state),
+        onTapOutside: (_) {
+          // Overriding onTapOutside replaces TextField's default handler, so
+          // the dismissal it would have done has to be done here — otherwise
+          // the soft keyboard stays up after tapping away on mobile.
+          FocusManager.instance.primaryFocus?.unfocus();
+          _persistTerminalAppearance(state);
+        },
+      ),
+      const SizedBox(height: 16),
+      DropdownButtonFormField<TerminalPalette>(
+        initialValue: _terminalPalette,
+        decoration: const InputDecoration(labelText: 'Colors'),
+        items: const [
+          DropdownMenuItem(
+            value: TerminalPalette.followApp,
+            child: Text('Follow the app theme'),
+          ),
+          DropdownMenuItem(
+            value: TerminalPalette.alwaysDark,
+            child: Text('Always dark'),
+          ),
+          DropdownMenuItem(
+            value: TerminalPalette.alwaysLight,
+            child: Text('Always light'),
+          ),
+        ],
+        onChanged: (value) {
+          if (value == null) return;
+          setState(() => _terminalPalette = value);
+          _persistTerminalAppearance(state);
         },
       ),
       const Divider(height: 40),
@@ -700,6 +786,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     state.services.settings.checkForUpdates = _checkForUpdates;
     await state.services.saveSettings();
     if (!_checkForUpdates) state.dismissUpdateNotice();
+  }
+
+  /// Persist terminal appearance and repaint every live session. Called on
+  /// slider release and on each discrete choice, so the General tab keeps its
+  /// "saves immediately" contract.
+  Future<void> _persistTerminalAppearance(AppState state) async {
+    final settings = state.services.settings;
+    final family = _terminalFont.text.trim();
+    if (settings.terminalFontSize == _terminalFontSize &&
+        settings.terminalPalette == _terminalPalette &&
+        settings.terminalFontFamily == family) {
+      return;
+    }
+    settings.terminalFontSize = _terminalFontSize;
+    settings.terminalPalette = _terminalPalette;
+    settings.terminalFontFamily = family;
+    // Terminals read the settings during build, so they need a nudge.
+    state.terminalAppearanceChanged();
+    await state.services.saveSettings();
   }
 
   Future<void> _persistEditorRegistry(AppState state) async {

@@ -6,10 +6,12 @@ import 'package:xterm/xterm.dart' show TerminalController;
 
 import 'services/app_services.dart';
 import 'services/app_settings.dart';
+import 'services/chat_session.dart';
 import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
 import 'services/remote_files_controller.dart';
 import 'services/xterm_engine.dart';
+import 'ui/terminal_appearance.dart';
 
 /// Connection state of a server's terminal, mirrored by the status dot in the
 /// server list (green / grey / red, with a spinner while connecting).
@@ -141,6 +143,11 @@ class AppState extends ChangeNotifier {
   final SecretRedactor _redactor = SecretRedactor();
   Timer? _statsSaveDebounce;
 
+  /// The assistant conversation. Lives here rather than in the sidebar widget
+  /// so it survives the drawer closing on narrow layouts, and the pane being
+  /// rebuilt when the layout crosses the wide/narrow breakpoint.
+  final ChatSession chat = ChatSession();
+
   /// UI-supplied interaction hooks (wired by the root widget so dialogs can be
   /// shown). Default to a safe "deny" if the UI hasn't set them yet.
   HostKeyPrompter? hostKeyPrompter;
@@ -215,6 +222,12 @@ class AppState extends ChangeNotifier {
     snippets = await services.snippetStore.listSnippets();
     await refreshLlmConfigured();
     _recomputeSuggestions();
+    // Skip hosts that already hold a live session: they are demonstrably
+    // reachable, and probing them only adds an sshd log line every sweep.
+    services.probe.connectedServerIds = () => {
+      for (final session in sessions)
+        if (session.isConnected) session.serverId,
+    };
     _probeSub = services.probe.statuses.listen((s) {
       statuses = s;
       notifyListeners();
@@ -745,6 +758,28 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // --- Terminal appearance ---
+
+  /// Change the terminal font size by [delta] points (the ⌘+ / ⌘− shortcuts),
+  /// or reset it to the default when [delta] is null (⌘0). Clamped to the
+  /// supported range; a no-op change neither notifies nor writes to disk.
+  Future<void> zoomTerminal(double? delta) async {
+    final settings = services.settings;
+    final next = clampTerminalFontSize(
+      delta == null
+          ? kDefaultTerminalFontSize
+          : settings.terminalFontSize + delta,
+    );
+    if (next == settings.terminalFontSize) return;
+    settings.terminalFontSize = next;
+    notifyListeners();
+    await services.saveSettings();
+  }
+
+  /// Repaint live terminals after the appearance settings changed in place
+  /// (the settings screen owns the write; this only refreshes the views).
+  void terminalAppearanceChanged() => notifyListeners();
+
   /// Dismiss the update affordance for this session (a fresh launch re-checks).
   void dismissUpdateNotice() {
     if (updateInfo == null) return;
@@ -901,6 +936,11 @@ class AppState extends ChangeNotifier {
     _autoSyncTimer?.cancel();
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
+    chat.dispose();
+    // Drop the callback before the service goes: it closes over `sessions`,
+    // so a probe service that outlived this state would keep reading a list
+    // that is no longer maintained (and keep this object alive).
+    services.probe.connectedServerIds = null;
     services.probe.dispose();
     for (final t in sessions) {
       // Teardown is asynchronous but nothing can await it here: swallow the

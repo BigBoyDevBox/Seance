@@ -12,6 +12,7 @@ import 'ui/adaptive_shell.dart';
 import 'ui/app_menus.dart';
 import 'ui/host_key_dialog.dart';
 import 'ui/keyboard_interactive_dialog.dart';
+import 'ui/top_toast.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -108,9 +109,29 @@ class _BootstrapState extends State<_Bootstrap> with WidgetsBindingObserver {
 
     await state.load();
     _installMacMenu(state);
+    _warnIfSettingsWereRecovered(state);
     // Fire-and-forget: don't let a slow/offline update check hold up startup.
     unawaited(_checkForUpdate(state));
     return state;
+  }
+
+  /// Tell the user their settings file could not be read, once, after the shell
+  /// is up. The bad file is kept next to the new one as `settings.json.corrupt`
+  /// so nothing is lost silently.
+  void _warnIfSettingsWereRecovered(AppState state) {
+    if (!state.services.settingsWereRecovered) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = navigatorKey.currentContext;
+      if (context == null) return;
+      showTopToast(
+        Overlay.of(context, rootOverlay: true),
+        message:
+            'Your settings file could not be read and was reset. The previous '
+            'one is kept as settings.json.corrupt — check Settings before '
+            'syncing.',
+        duration: const Duration(seconds: 10),
+      );
+    });
   }
 
   /// Look up the running version and ask AppState to check GitHub for a newer
