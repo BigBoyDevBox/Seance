@@ -202,6 +202,12 @@ class AppState extends ChangeNotifier {
     snippets = await services.snippetStore.listSnippets();
     await refreshLlmConfigured();
     _recomputeSuggestions();
+    // Skip hosts that already hold a live session: they are demonstrably
+    // reachable, and probing them only adds an sshd log line every sweep.
+    services.probe.connectedServerIds = () => {
+      for (final session in sessions)
+        if (session.isConnected) session.serverId,
+    };
     _probeSub = services.probe.statuses.listen((s) {
       statuses = s;
       notifyListeners();
@@ -883,6 +889,10 @@ class AppState extends ChangeNotifier {
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
     chat.dispose();
+    // Drop the callback before the service goes: it closes over `sessions`,
+    // so a probe service that outlived this state would keep reading a list
+    // that is no longer maintained (and keep this object alive).
+    services.probe.connectedServerIds = null;
     services.probe.dispose();
     for (final t in sessions) {
       _disposeSession(t);
