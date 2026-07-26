@@ -18,21 +18,42 @@ import 'ui/terminal_appearance.dart';
 enum TerminalStatus { connecting, connected, disconnected, error }
 
 /// What the remote shell has told us about a session: the OSC 7 working
-/// directory and the OSC 0/2 terminal title. Used to name the session's tab.
+/// directory, the OSC 0/2 terminal title, and the command it is running right
+/// now. Used to name the session's tab.
 @immutable
 class SessionMetadata {
   final String? workingDirectory;
   final String? terminalTitle;
-  const SessionMetadata({this.workingDirectory, this.terminalTitle});
+
+  /// The command the session has been running for a while (already redacted),
+  /// or null at a prompt. Unlike the fields above this is *not* kept-last:
+  /// it names what the tab is doing, and a finished command must fall back
+  /// to where the tab is.
+  final String? runningCommand;
+
+  const SessionMetadata({
+    this.workingDirectory,
+    this.terminalTitle,
+    this.runningCommand,
+  });
+
+  /// This metadata with the transient command dropped — what a reconnect
+  /// carries over: the command died with the connection, the place did not.
+  SessionMetadata get withoutRunningCommand => SessionMetadata(
+    workingDirectory: workingDirectory,
+    terminalTitle: terminalTitle,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is SessionMetadata &&
       other.workingDirectory == workingDirectory &&
-      other.terminalTitle == terminalTitle;
+      other.terminalTitle == terminalTitle &&
+      other.runningCommand == runningCommand;
 
   @override
-  int get hashCode => Object.hash(workingDirectory, terminalTitle);
+  int get hashCode =>
+      Object.hash(workingDirectory, terminalTitle, runningCommand);
 }
 
 /// Repaint signal for one session's connection log.
@@ -90,6 +111,20 @@ class TerminalSession {
   /// the tab strip alone instead of the whole app.
   final ValueNotifier<SessionMetadata> metadata;
 
+  /// How long a command must keep running before it becomes the tab's name.
+  /// Quick commands (`ls`, `git status`) finish inside this window, so the
+  /// strip doesn't repaint a new label for every enter key.
+  static const Duration commandRevealDelay = Duration(milliseconds: 1500);
+
+  /// Tab labels are chrome: a secret pasted into a command line must never be
+  /// rendered in the strip. Always on — unlike the assistant's redaction
+  /// toggle there is nothing being *sent* here to opt out of, and the engine's
+  /// capture is keystroke-level so it sees passwords typed at flag prompts.
+  static final SecretRedactor _redactor = SecretRedactor();
+
+  Timer? _commandReveal;
+  int _commandGeneration = 0;
+
   TerminalSession({
     required this.id,
     String? editSessionId,
@@ -104,6 +139,7 @@ class TerminalSession {
     log = SshConnectionLog(onUpdate: logNotifier.bump);
     engine.workingDirectory.addListener(_syncMetadata);
     engine.terminalTitle.addListener(_syncMetadata);
+    engine.activeCommand.addListener(_syncRunningCommand);
   }
 
   void _syncMetadata() {
@@ -119,11 +155,41 @@ class TerminalSession {
         engine.terminalTitle.value,
         metadata.value.terminalTitle,
       ),
+      runningCommand: metadata.value.runningCommand,
     );
   }
 
   static String? _keepLast(String? reported, String? previous) =>
       (reported == null || reported.isEmpty) ? previous : reported;
+
+  /// Mirror the engine's running command into [metadata], but only once it
+  /// has been running for [commandRevealDelay]. Ends are immediate; reveals
+  /// are debounced by generation so a command that finished (or was replaced)
+  /// during the delay never surfaces late. The command text is captured and
+  /// redacted here, up front — the timer must not read the engine, which a
+  /// dropped connection disposes out from under it.
+  void _syncRunningCommand() {
+    final line = engine.activeCommand.value;
+    _commandGeneration++;
+    _commandReveal?.cancel();
+    _commandReveal = null;
+    if (line == null || line.isEmpty) {
+      if (metadata.value.runningCommand != null) {
+        metadata.value = metadata.value.withoutRunningCommand;
+      }
+      return;
+    }
+    final generation = _commandGeneration;
+    final shown = _redactor.redact(line);
+    _commandReveal = Timer(commandRevealDelay, () {
+      if (generation != _commandGeneration) return;
+      metadata.value = SessionMetadata(
+        workingDirectory: metadata.value.workingDirectory,
+        terminalTitle: metadata.value.terminalTitle,
+        runningCommand: shown,
+      );
+    });
+  }
 
   /// Release what the session owns beyond its engine and SSH connection.
   ///
@@ -133,8 +199,10 @@ class TerminalSession {
   /// reader has to infer from `XtermTerminalEngine.dispose`. Removing a
   /// listener from an already-disposed notifier is explicitly supported.
   void dispose() {
+    _commandReveal?.cancel();
     engine.workingDirectory.removeListener(_syncMetadata);
     engine.terminalTitle.removeListener(_syncMetadata);
+    engine.activeCommand.removeListener(_syncRunningCommand);
     metadata.dispose();
   }
 
@@ -516,8 +584,10 @@ class AppState extends ChangeNotifier {
       config: config,
       engine: XtermTerminalEngine(onCommand: _recordCommand),
       // Carry the shell-reported identity across the reconnect so the tab
-      // keeps its name instead of flickering back to "Session N".
-      initialMetadata: old.metadata.value,
+      // keeps its name instead of flickering back to "Session N". The running
+      // command is deliberately not carried: it belonged to the dead
+      // connection.
+      initialMetadata: old.metadata.value.withoutRunningCommand,
     );
     sessions[index] = replacement;
     if (activeSessionId == old.id) _setActive(replacement.id);

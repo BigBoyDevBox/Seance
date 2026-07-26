@@ -1,5 +1,6 @@
 /// Naming for one terminal session, derived from what the remote shell tells
-/// us: the OSC 7 working directory and the OSC 0/2 terminal title.
+/// us: the command it is running, the OSC 7 working directory, and the
+/// OSC 0/2 terminal title.
 ///
 /// Kept free of Flutter so the rules can be unit-tested directly. Everything
 /// here treats remote metadata as untrusted display text: control and
@@ -39,7 +40,22 @@ String shortenLabelHead(String value, int maxLength) {
   if (graphemes.length <= maxLength) return value;
   final keep = maxLength - 1;
   if (keep <= 0) return _ellipsis;
-  return '$_ellipsis${graphemes.skip(graphemes.length - keep).join()}';
+  // Trimmed so a cut at a word boundary doesn't strand a space against the
+  // ellipsis (`… foo` → `…foo`).
+  return '$_ellipsis${graphemes.skip(graphemes.length - keep).join().trimLeft()}';
+}
+
+/// Shorten [value] to [maxLength] grapheme clusters, ellipsising the *end* —
+/// the mirror of [shortenLabelHead], for commands, whose distinguishing half
+/// is the front: the program name and its leading arguments.
+String shortenLabelTail(String value, int maxLength) {
+  final graphemes = characters.Characters(value).toList(growable: false);
+  if (graphemes.length <= maxLength) return value;
+  final keep = maxLength - 1;
+  if (keep <= 0) return _ellipsis;
+  // Trimmed so a cut at an argument boundary doesn't strand a space against
+  // the ellipsis (`rsync -avz …` → `rsync -avz…`).
+  return '${graphemes.take(keep).join().trimRight()}$_ellipsis';
 }
 
 /// The last segment of an absolute POSIX [path], or `/` for the root itself.
@@ -53,17 +69,25 @@ String? posixBasename(String path) {
 /// The label shown on a session's tab chip.
 ///
 /// Preference order, most to least informative:
-/// 1. the working directory's last segment (OSC 7) — the server is already
+/// 1. the command the session is running — what the tab is *doing* beats
+///    where it is; two tabs on one host usually exist to run different
+///    things, so this is both the best name and a natural disambiguator,
+/// 2. the working directory's last segment (OSC 7) — the server is already
 ///    identified by the selected row, so *where* on it is the useful part,
-/// 2. the terminal title (OSC 0/2), which many Bash setups carry even when
+/// 3. the terminal title (OSC 0/2), which many Bash setups carry even when
 ///    they do not emit OSC 7,
-/// 3. `Session N` — the previous behavior, when the shell reports nothing.
+/// 4. `Session N` — the original behavior, when the shell reports nothing.
 String sessionTabLabel({
   required int ordinal,
   String? workingDirectory,
   String? terminalTitle,
+  String? runningCommand,
   int maxLength = 18,
 }) {
+  final command = runningCommand == null
+      ? ''
+      : sanitizeRemoteLabel(runningCommand);
+  if (command.isNotEmpty) return shortenLabelTail(command, maxLength);
   final cwd = workingDirectory == null
       ? null
       : posixBasename(sanitizeRemoteLabel(workingDirectory));
@@ -73,14 +97,39 @@ String sessionTabLabel({
   return 'Session $ordinal';
 }
 
+/// Suffix duplicate labels with a small stable ordinal (`~ ·1`, `~ ·2`) so
+/// same-server tabs sitting in the same place stay tellable-apart — the floor
+/// under the whole naming scheme. Unique labels pass through untouched, and a
+/// suffix disappears on its own the moment the underlying labels diverge.
+/// Numbering follows tab order, so it never depends on which tab changed.
+List<String> disambiguateTabLabels(List<String> labels) {
+  final counts = <String, int>{};
+  for (final label in labels) {
+    counts[label] = (counts[label] ?? 0) + 1;
+  }
+  final seen = <String, int>{};
+  return [
+    for (final label in labels)
+      if (counts[label]! > 1)
+        '$label ·${seen[label] = (seen[label] ?? 0) + 1}'
+      else
+        label,
+  ];
+}
+
 /// The tooltip for a session's tab chip: everything the label had to drop.
 String sessionTabTooltip({
   required int ordinal,
   required String target,
   String? workingDirectory,
   String? terminalTitle,
+  String? runningCommand,
 }) {
   final lines = <String>['Session $ordinal · $target'];
+  final command = runningCommand == null
+      ? ''
+      : sanitizeRemoteLabel(runningCommand);
+  if (command.isNotEmpty) lines.add('Running: $command');
   final cwd = workingDirectory == null
       ? ''
       : sanitizeRemoteLabel(workingDirectory);
