@@ -116,6 +116,44 @@ void main() {
     expect((await cfgA.getServer('s1'))!.label, 'name-v2');
   });
 
+  test('a server\'s group, colour and icon travel with it', () async {
+    final srv = FakeServer();
+    final codec = RecordCodec(secureRandomBytes(32));
+
+    final cfgA = InMemoryConfigStore();
+    final cfgB = InMemoryConfigStore();
+    await cfgA.putServer(server('s1', 'alpha', 10).copyWith(
+      group: 'Production',
+      color: ServerColor.red,
+      icon: ServerIcon.rocket,
+      updatedAt: 10,
+    ));
+
+    SyncCoordinator coord(ConfigStore c, String dev) => SyncCoordinator(
+        configStore: c,
+        hostKeyStore: InMemoryHostKeyStore(),
+        codec: codec,
+        local: InMemoryLocalRecordStore(),
+        deviceId: dev);
+
+    await coord(cfgA, 'A').run(srv);
+    await coord(cfgB, 'B').run(srv);
+
+    final onB = (await cfgB.getServer('s1'))!;
+    expect(onB.group, 'Production');
+    expect(onB.color, ServerColor.red);
+    expect(onB.icon, ServerIcon.rocket);
+
+    // Regrouping is an ordinary edit, so it converges the same way a rename
+    // does — the point being that a group is a name the member carries, with
+    // no separate record that could be left behind.
+    await cfgB.putServer(onB.copyWith(group: 'Staging', updatedAt: 50));
+    await coord(cfgB, 'B').run(srv);
+    await coord(cfgA, 'A').run(srv);
+
+    expect((await cfgA.getServer('s1'))!.group, 'Staging');
+  });
+
   test('snippets sync between two devices', () async {
     final srv = FakeServer();
     final codec = RecordCodec(secureRandomBytes(32));

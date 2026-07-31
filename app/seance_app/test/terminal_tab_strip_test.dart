@@ -113,4 +113,63 @@ void main() {
     expect(find.text('user'), findsOneWidget);
     expect(find.text('log'), findsOneWidget);
   });
+
+  testWidgets('the server accent colours the strip\'s rule', (tester) async {
+    final config = ServerConfig(
+      id: 'server',
+      label: 'Server',
+      host: 'example.com',
+      username: 'user',
+      authMethod: AuthMethod.password,
+      createdAt: 0,
+      updatedAt: 0,
+    );
+    final engine = XtermTerminalEngine();
+    addTearDown(engine.dispose);
+    final tab = TerminalSession(
+      id: 'tab',
+      serverId: config.id,
+      config: config,
+      engine: engine,
+      connecting: false,
+    );
+    addTearDown(tab.dispose);
+
+    BorderSide ruleOf(WidgetTester tester) {
+      final container = tester.widget<Container>(
+        find
+            .descendant(
+              of: find.byType(TerminalTabStrip),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      return (container.decoration as BoxDecoration).border!.bottom;
+    }
+
+    Future<void> pump(Color? accent) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TerminalTabStrip(
+            tabs: [tab],
+            activeSessionId: tab.id,
+            onFocus: (_) {},
+            onClose: (_) {},
+            onNewTab: () {},
+            onGenerateCommand: () {},
+            accent: accent,
+          ),
+        ),
+      ),
+    );
+
+    await pump(null);
+    final plain = ruleOf(tester);
+    expect(plain.width, 1, reason: 'an uncoloured server keeps the hairline');
+
+    await pump(const Color(0xFFE03131));
+    final accented = ruleOf(tester);
+    expect(accented.color, const Color(0xFFE03131));
+    expect(accented.width, greaterThan(plain.width));
+  });
 }

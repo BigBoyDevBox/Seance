@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:seance_core/seance_core.dart';
@@ -457,6 +458,26 @@ class AppState extends ChangeNotifier {
     _scheduleAutoSync();
   }
 
+  /// Server-list group sections currently folded away, keyed by
+  /// [serverGroupKey]. Read straight off settings rather than mirrored here:
+  /// there is one owner of the value, and it is the thing that persists it.
+  ///
+  /// A view rather than a copy — `Set.unmodifiable` would duplicate the
+  /// elements on every read, and the list pane reads this on every build. The
+  /// wrapper is what says [toggleServerGroup] is the only writer: folding a
+  /// section by mutating this set would skip both the repaint and the save.
+  Set<String> get collapsedServerGroups =>
+      UnmodifiableSetView(services.settings.collapsedServerGroups);
+
+  /// Fold a group section away, or open it again.
+  Future<void> toggleServerGroup(String key) async {
+    final collapsed = services.settings.collapsedServerGroups;
+    // remove() reports whether it was there, so this is one lookup, not two.
+    if (!collapsed.remove(key)) collapsed.add(key);
+    notifyListeners();
+    await services.saveSettings();
+  }
+
   /// Import hosts from an OpenSSH config file's text.
   Future<int> importSshConfig(String text) async {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -614,6 +635,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await _connect(replacement);
   }
+
+  /// The current config for [serverId], preferring the stored list over the
+  /// snapshot a live session captured at connect time — an edit made while a
+  /// session is open should be reflected by anything that reads the config for
+  /// display, not just by the next connection.
+  ServerConfig? configFor(String serverId) => _configFor(serverId);
 
   ServerConfig? _configFor(String serverId) {
     for (final s in servers) {

@@ -96,6 +96,13 @@ class AppSettings {
   /// fall back to the server's identity file *path*.
   Map<String, IdentityFileBookmark> identityFileBookmarks;
 
+  /// Server-list group sections the user has folded away, by
+  /// [serverGroupKey]. Device-local for the same reason the pane widths are:
+  /// which sections are folded is a property of the window in front of you,
+  /// not of the account. The *grouping* itself lives on the server configs and
+  /// does sync.
+  Set<String> collapsedServerGroups;
+
   /// Terminal appearance. Device-local by design: the right font size depends
   /// on the screen in front of you, not on the account, so these never sync.
   double terminalFontSize;
@@ -130,6 +137,7 @@ class AppSettings {
     Map<String, List<String>>? remotePathBookmarks,
     Map<String, bool>? remoteShowHidden,
     Map<String, IdentityFileBookmark>? identityFileBookmarks,
+    Set<String>? collapsedServerGroups,
     this.terminalFontSize = kDefaultTerminalFontSize,
     this.terminalFontFamily = '',
     this.terminalPalette = TerminalPalette.followApp,
@@ -138,7 +146,8 @@ class AppSettings {
   }) : editorRegistry = editorRegistry ?? EditorRegistry(),
        remotePathBookmarks = remotePathBookmarks ?? {},
        remoteShowHidden = remoteShowHidden ?? {},
-       identityFileBookmarks = identityFileBookmarks ?? {};
+       identityFileBookmarks = identityFileBookmarks ?? {},
+       collapsedServerGroups = collapsedServerGroups ?? {};
 
   Map<String, dynamic> toJson() => {
     'llmKind': llmKind.name,
@@ -164,6 +173,10 @@ class AppSettings {
     'remoteShowHidden': remoteShowHidden,
     'identityFileBookmarks': identityFileBookmarks
         .map((id, entry) => MapEntry(id, entry.toJson())),
+    // Sorted so an unchanged set writes byte-identical JSON — the settings
+    // file is rewritten on every save, and a set's iteration order would
+    // otherwise make each one look like a change.
+    'collapsedServerGroups': collapsedServerGroups.toList()..sort(),
     'terminalFontSize': terminalFontSize,
     'terminalFontFamily': terminalFontFamily,
     'terminalPalette': terminalPalette.name,
@@ -195,6 +208,7 @@ class AppSettings {
     remotePathBookmarks: _bookmarkMap(json['remotePathBookmarks']),
     remoteShowHidden: _boolMap(json['remoteShowHidden']),
     identityFileBookmarks: _identityBookmarkMap(json['identityFileBookmarks']),
+    collapsedServerGroups: _stringSet(json['collapsedServerGroups']),
     // Clamped on read: a hand-edited or downgraded settings file must never be
     // able to render the terminal at an unusable size.
     terminalFontSize: clampTerminalFontSize(
@@ -267,6 +281,15 @@ Map<String, IdentityFileBookmark> _identityBookmarkMap(Object? value) {
     if (bookmark != null) result[entry.key as String] = bookmark;
   }
   return result;
+}
+
+/// A tolerant string set: anything that isn't a list of strings reads as empty,
+/// like every other collection here. A stale key for a group that no longer
+/// exists is harmless — nothing looks it up — so entries are not validated
+/// against the current servers.
+Set<String> _stringSet(Object? value) {
+  if (value is! List) return {};
+  return value.whereType<String>().toSet();
 }
 
 Map<String, bool> _boolMap(Object? value) {
