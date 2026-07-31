@@ -153,7 +153,13 @@ class SandboxMigration {
       // Anything already sitting in the destination is not ours — a stray
       // .DS_Store is the realistic case — but `rename` onto a directory needs
       // that directory empty, so carry it across rather than delete it.
-      await for (final entry in support.list(followLinks: false)) {
+      //
+      // Listed to completion first. `list` streams `readdir`, and removing
+      // entries mid-stream can silently skip others: with two dot-files, one
+      // could be left behind, the rename below would fail ENOTEMPTY, and a
+      // migration that was about to succeed would instead refuse to launch.
+      final strays = await support.list(followLinks: false).toList();
+      for (final entry in strays) {
         final name = entry.path.split(Platform.pathSeparator).last;
         await entry.rename('${staging.path}${Platform.pathSeparator}$name');
       }

@@ -93,6 +93,24 @@ void main() {
       );
     });
 
+    test('several stray dot-files are all carried across', () async {
+      // The destination is listed to completion before any of them moves:
+      // renaming out of a directory that is still streaming can skip entries,
+      // and one left behind would fail the rename with ENOTEMPTY — turning a
+      // migration that was about to succeed into a refused launch.
+      for (final name in const ['.DS_Store', '.Spotlight-V100', '.localized']) {
+        File('${support.path}/$name').writeAsStringSync(name);
+      }
+      writeLegacy('settings.json', '{"deviceId":"abc"}');
+
+      expect(await migration().run(), SandboxMigrationOutcome.migrated);
+      expect(jsonDecode(readSupport('settings.json'))['deviceId'], 'abc');
+      for (final name in const ['.DS_Store', '.Spotlight-V100', '.localized']) {
+        expect(File('${support.path}/$name').existsSync(), isTrue,
+            reason: name);
+      }
+    });
+
     test('a stray dot-file does not block it, and is not destroyed', () async {
       // Someone opened ~/Library/Application Support in Finder. That must
       // neither read as "this install is in use" nor cost them the file.
