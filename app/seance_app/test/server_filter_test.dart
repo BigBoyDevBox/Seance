@@ -7,6 +7,7 @@ ServerConfig _server({
   String host = 'example.com',
   String username = 'ops',
   int port = 22,
+  String? group,
 }) => ServerConfig(
   id: label,
   label: label,
@@ -14,6 +15,7 @@ ServerConfig _server({
   port: port,
   username: username,
   authMethod: AuthMethod.privateKey,
+  group: group,
   createdAt: 0,
   updatedAt: 0,
 );
@@ -22,7 +24,13 @@ void main() {
   final servers = [
     _server(label: 'prod web', host: 'prod-web-01.eu-west.example.com'),
     _server(label: 'prod db', host: 'prod-db-01.us-east.example.com'),
-    _server(label: 'lab', host: '10.0.0.5', username: 'root', port: 2222),
+    _server(
+      label: 'lab',
+      host: '10.0.0.5',
+      username: 'root',
+      port: 2222,
+      group: 'Home lab',
+    ),
   ];
 
   group('filterServers', () {
@@ -37,6 +45,18 @@ void main() {
       expect(filterServers(servers, 'us-east').single.label, 'prod db');
       expect(filterServers(servers, 'root').single.label, 'lab');
       expect(filterServers(servers, '2222').single.label, 'lab');
+    });
+
+    test('matches the group, so a section name narrows to that section', () {
+      expect(filterServers(servers, 'home lab').single.label, 'lab');
+      // And composes with the other terms like anything else in the haystack.
+      expect(filterServers(servers, 'home root').single.label, 'lab');
+    });
+
+    test('a server with no group is unaffected by group matching', () {
+      // "home" belongs to one server's group only; the ungrouped two must not
+      // pick it up from an empty group reading as a wildcard.
+      expect(filterServers(servers, 'home'), hasLength(1));
     });
 
     test('is case-insensitive', () {
