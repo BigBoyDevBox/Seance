@@ -19,10 +19,14 @@ import 'settings_screen.dart';
 class ServerListPane extends StatefulWidget {
   final void Function(ServerConfig server) onOpen;
 
-  /// Open the local shell. Null in tests that only exercise the server list.
-  final VoidCallback? onOpenLocal;
+  /// Open the local shell.
+  final VoidCallback onOpenLocal;
 
-  const ServerListPane({super.key, required this.onOpen, this.onOpenLocal});
+  const ServerListPane({
+    super.key,
+    required this.onOpen,
+    required this.onOpenLocal,
+  });
 
   /// Below this many servers the list is short enough to read at a glance and
   /// the filter would just be chrome. Matches the Snippets pane's threshold.
@@ -146,7 +150,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                   tabCount: localTabs.length,
                   shellName: state.services.localShell.shellName,
                   selected: state.activeServerId == kLocalShellServerId,
-                  onTap: () => widget.onOpenLocal?.call(),
+                  onTap: widget.onOpenLocal,
                   onNewTab: state.newLocalTab,
                   onCloseAll: () =>
                       state.closeAllTabsForServer(kLocalShellServerId),

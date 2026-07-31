@@ -62,6 +62,10 @@ void main() {
     });
 
     test('the host platform maps onto the core enum', () {
+      // Registered before the loop: an expect that throws must still put the
+      // override back, or every widget test after this one runs on the wrong
+      // platform and fails for reasons that have nothing to do with them.
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       for (final entry in const {
         TargetPlatform.linux: LocalShellPlatform.linux,
         TargetPlatform.macOS: LocalShellPlatform.macos,
@@ -73,7 +77,6 @@ void main() {
         debugDefaultTargetPlatformOverride = entry.key;
         expect(LocalShellService.hostPlatform(), entry.value);
       }
-      debugDefaultTargetPlatformOverride = null;
     });
   });
 

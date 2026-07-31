@@ -146,10 +146,14 @@ class ChatController {
 
     var userContent = userText;
     // Séance's own line, kept outside the untrusted markers below: it is not
-    // something the terminal said.
+    // something the terminal said. Flattened to one line first — it is built
+    // from a server's own username and host, which the user types, and a
+    // newline in either would let this smuggle directives into the half of
+    // the prompt the model is entitled to trust.
     final target = sessionTarget == null || sessionTarget.trim().isEmpty
         ? ''
-        : 'Focused session: ${sessionTarget.trim()}\n\n';
+        : 'Focused session: '
+            '${sessionTarget.replaceAll(RegExp(r'\s+'), ' ').trim()}\n\n';
     if (terminalContext != null && terminalContext.trim().isNotEmpty) {
       final redacted = redactor.redact(terminalContext);
       sent.add(SentContext('terminal context (redacted)', redacted));
