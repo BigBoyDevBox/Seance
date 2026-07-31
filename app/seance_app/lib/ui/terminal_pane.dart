@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:seance_core/seance_core.dart';
 import 'package:xterm/xterm.dart';
 
 import '../app_state.dart';
@@ -13,6 +14,7 @@ import 'app_menus.dart';
 import 'command_generator.dart';
 import 'files_pane.dart';
 import 'middle_ellipsis_text.dart';
+import 'server_appearance.dart';
 import 'session_label.dart';
 import 'sidebar_panel.dart';
 import 'terminal_appearance.dart';
@@ -56,6 +58,11 @@ class TerminalPane extends StatelessWidget {
         final active = state.activeSession;
         final showKeyRow =
             _isTouchPlatform && active != null && active.isConnected;
+        // The stored config, not the session's connect-time snapshot: recolour
+        // a server while you are on it and the strip should follow.
+        final server = active == null
+            ? null
+            : state.configFor(active.serverId) ?? active.config;
         return Scaffold(
           // Reflow the terminal (and the key row) above the soft keyboard.
           resizeToAvoidBottomInset: true,
@@ -65,7 +72,7 @@ class TerminalPane extends StatelessWidget {
                   child: SidebarPanel(includeFiles: false),
                 )
               : null,
-          appBar: showAppBar ? _appBar(context, state) : null,
+          appBar: showAppBar ? _appBar(context, state, server) : null,
           body: Column(
             children: [
               if (active != null)
@@ -77,6 +84,11 @@ class TerminalPane extends StatelessWidget {
                   onNewTab: () => state.duplicateTab(active),
                   onGenerateCommand: () => openCommandGenerator(state),
                   onRename: state.renameSession,
+                  // In the wide layout the strip is the only chrome the
+                  // terminal has, so it carries the server's colour: the
+                  // "am I on prod?" question gets an answer at the edge of
+                  // vision instead of one you have to read.
+                  accent: serverAccent(context, server?.color)?.line,
                 ),
               Expanded(child: _body(state)),
               if (active != null) SessionStatusBar(session: active),
@@ -126,14 +138,39 @@ class TerminalPane extends StatelessWidget {
     await state.closeTab(sessionId);
   }
 
-  PreferredSizeWidget _appBar(BuildContext context, AppState state) {
+  PreferredSizeWidget _appBar(
+    BuildContext context,
+    AppState state,
+    ServerConfig? server,
+  ) {
     final active = state.activeSession;
     final status = active?.status;
     return AppBar(
       leading: onBack != null
           ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: onBack)
           : null,
-      title: Text(active?.displayLabel ?? 'Terminal'),
+      // The badge repeats the mark from the list row, which is what makes it
+      // worth anything: the same colour and glyph you picked the server by is
+      // still in front of you once you are on it. `leading` is spoken for by
+      // back-navigation on the narrow layout, so it rides with the title.
+      //
+      // A local shell has no server and so no badge — `displayLabel` is what
+      // names it, and it is also what keeps this off the now-nullable config.
+      title: Row(
+        children: [
+          if (server != null) ...[
+            ServerBadge(color: server.color, icon: server.icon, size: 24),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Text(
+              server?.label ?? active?.displayLabel ?? 'Terminal',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
       actions: [
         // Not offered for a local shell: there is no remote side to browse,
         // and a permanently-disabled button reads as something being broken.
@@ -216,6 +253,10 @@ class TerminalTabStrip extends StatelessWidget {
   /// automatic naming. Optional so the strip can be built without one.
   final void Function(String sessionId, String? name)? onRename;
 
+  /// The server's accent colour, drawn as the strip's bottom rule. Null keeps
+  /// the ordinary hairline — a server with no colour looks exactly as before.
+  final Color? accent;
+
   const TerminalTabStrip({
     super.key,
     required this.tabs,
@@ -225,6 +266,7 @@ class TerminalTabStrip extends StatelessWidget {
     required this.onNewTab,
     required this.onGenerateCommand,
     this.onRename,
+    this.accent,
   });
 
   @override
@@ -234,7 +276,14 @@ class TerminalTabStrip extends StatelessWidget {
       height: 38,
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest,
-        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+        border: Border(
+          bottom: BorderSide(
+            color: accent ?? scheme.outlineVariant,
+            // Thickened as well as coloured: on a dim accent against a dark
+            // theme, a hairline is a hairline whatever colour it is.
+            width: accent == null ? 1 : 2,
+          ),
+        ),
       ),
       child: Row(
         children: [

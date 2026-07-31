@@ -3,6 +3,8 @@ import 'package:seance_core/seance_core.dart';
 
 import '../app_state.dart';
 import '../services/app_settings.dart';
+import 'server_appearance.dart';
+import 'server_grouping.dart';
 
 /// Add or edit a server. Password / private-key material is written to the
 /// encrypted vault; the config stores only a reference.
@@ -34,12 +36,15 @@ class _ServerEditorState extends State<_ServerEditor> {
   late final TextEditingController _host;
   late final TextEditingController _port;
   late final TextEditingController _user;
+  late final TextEditingController _group;
   final _password = TextEditingController();
   final _keyPem = TextEditingController();
   final _keyPath = TextEditingController();
   final _keyPassphrase = TextEditingController();
 
   late AuthMethod _auth;
+  late ServerColor? _color;
+  late ServerIcon? _icon;
   bool _referenceKeyFile = true;
   late bool _syncSecret;
   bool _busy = false;
@@ -59,6 +64,9 @@ class _ServerEditorState extends State<_ServerEditor> {
     _host = TextEditingController(text: e?.host ?? '');
     _port = TextEditingController(text: '${e?.port ?? 22}');
     _user = TextEditingController(text: e?.username ?? '');
+    _group = TextEditingController(text: e?.group ?? '');
+    _color = e?.color;
+    _icon = e?.icon;
     // Default new servers to password: ssh-agent is offered but not yet
     // supported by the backend, so defaulting to it would dead-end the very
     // first "add a server and connect".
@@ -86,6 +94,7 @@ class _ServerEditorState extends State<_ServerEditor> {
       _host,
       _port,
       _user,
+      _group,
       _password,
       _keyPem,
       _keyPath,
@@ -156,6 +165,8 @@ class _ServerEditorState extends State<_ServerEditor> {
             ),
             const SizedBox(height: 8),
             ..._authFields(),
+            const SizedBox(height: 20),
+            ..._appearanceFields(),
             const SizedBox(height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -247,6 +258,84 @@ class _ServerEditorState extends State<_ServerEditor> {
     }
   }
 
+  /// How this server is filed and marked in the list: its group, its accent
+  /// colour, and its icon. All three are optional and none of them affect how
+  /// the connection is made — they exist so a list of thirty boxes can be read
+  /// at a glance, and so "am I on prod?" has an answer you don't have to read.
+  List<Widget> _appearanceFields() {
+    final existing = existingServerGroups(widget.state.servers);
+    return [
+      const Divider(),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          // Colour and icon combine, so they are previewed together rather
+          // than left to be imagined from two separate pickers.
+          ServerBadge(color: _color, icon: _icon),
+          const SizedBox(width: 12),
+          Text('Appearance', style: Theme.of(context).textTheme.titleSmall),
+        ],
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _group,
+        decoration: const InputDecoration(
+          labelText: 'Group',
+          hintText: 'Production, Home lab, … — blank for none',
+        ),
+      ),
+      if (existing.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            // Retyping an existing group by hand is how you end up with
+            // "Prod " and "prodution" as separate sections. Case already
+            // folds together; the chips take care of the rest.
+            for (final group in existing)
+              ActionChip(
+                label: Text(group),
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _group.text = group),
+              ),
+          ],
+        ),
+      ],
+      const SizedBox(height: 16),
+      Text('Colour', style: Theme.of(context).textTheme.labelMedium),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final color in <ServerColor?>[null, ...ServerColor.values])
+            _ColorSwatch(
+              color: color,
+              selected: _color == color,
+              onTap: () => setState(() => _color = color),
+            ),
+        ],
+      ),
+      const SizedBox(height: 16),
+      Text('Icon', style: Theme.of(context).textTheme.labelMedium),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final icon in <ServerIcon?>[null, ...ServerIcon.values])
+            _IconChoice(
+              icon: icon,
+              accent: _color,
+              selected: _icon == icon,
+              onTap: () => setState(() => _icon = icon),
+            ),
+        ],
+      ),
+    ];
+  }
+
   /// Per-server opt-in for including this credential in sync. Gated globally by
   /// the "Sync saved passwords & keys" setting, so it's a no-op until that's on.
   Widget _syncSecretToggle() => SwitchListTile(
@@ -324,6 +413,12 @@ class _ServerEditorState extends State<_ServerEditor> {
       secretRef: secret != null ? secretRef : (existing?.secretRef),
       identityFilePath: identityFilePath,
       syncSecret: _syncSecret,
+      // Normalized here rather than trusted from the field, so a trailing
+      // space typed into the group name can't fork a second section that
+      // looks identical to the one the user meant to join.
+      group: normalizeServerGroup(_group.text),
+      color: _color,
+      icon: _icon,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     );
@@ -342,5 +437,102 @@ class _ServerEditorState extends State<_ServerEditor> {
           : null,
     );
     if (mounted) Navigator.of(context).pop();
+  }
+}
+
+/// One choice in the colour row. The first is null — "no colour" — drawn as
+/// the same neutral tone an untagged server gets in the list, so the option
+/// shows what it does rather than describing it.
+class _ColorSwatch extends StatelessWidget {
+  final ServerColor? color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  static const double _size = 34;
+
+  const _ColorSwatch({
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final accent = serverAccent(context, color);
+    final fill = accent?.container ?? scheme.surfaceContainerHighest;
+    final foreground = accent?.onContainer ?? scheme.onSurfaceVariant;
+    return Tooltip(
+      message: serverColorLabel(color),
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: _size,
+          height: _size,
+          decoration: BoxDecoration(
+            color: fill,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 2.5 : 1,
+            ),
+          ),
+          // A tick rather than a ring alone: at 34px on a phone the ring is
+          // easy to miss, and the swatches differ only by hue.
+          child: selected
+              ? Icon(Icons.check, size: 16, color: foreground)
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
+/// One choice in the icon row, previewed on the colour currently selected so
+/// the pair can be judged together.
+class _IconChoice extends StatelessWidget {
+  final ServerIcon? icon;
+  final ServerColor? accent;
+  final bool selected;
+  final VoidCallback onTap;
+
+  static const double _size = 34;
+
+  const _IconChoice({
+    required this.icon,
+    required this.accent,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final resolved = serverAccent(context, accent);
+    return Tooltip(
+      message: serverIconLabel(icon),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: _size,
+          height: _size,
+          decoration: BoxDecoration(
+            color: resolved?.container ?? scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 2.5 : 1,
+            ),
+          ),
+          child: Icon(
+            serverIconData(icon),
+            size: 18,
+            color: resolved?.onContainer ?? scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
   }
 }

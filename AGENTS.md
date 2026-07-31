@@ -108,7 +108,7 @@ the latest code and rebuilds + recreates the stack in one step.
 Everything security- or correctness-critical is covered by tests that run in CI
 (`.github/workflows/ci.yml`):
 
-- **216 Dart tests** across the three packages — crypto round-trips and
+- **228 Dart tests** across the three packages — crypto round-trips and
   wrong-key/tamper rejection, verifier independence, recovery-code corruption
   detection, TOFU decisions, the danger linter, paste sanitization, secret
   redaction, LLM request/response handling and the chat tool loop, **two-device
@@ -265,7 +265,7 @@ compiles the app for android/linux/macos/ios/windows on their native runners
 
 ## 4. How things were verified (so you can re-verify)
 
-- 216 Dart tests + 250 Flutter tests, all analyze clean.
+- 228 Dart tests + 283 Flutter tests, all analyze clean.
 - The local shell's *wiring* is covered by fakes; the pty itself cannot be in
   CI (no native library under `flutter test`). To re-verify it for real on
   Linux, build the plugin's unity target and run a throwaway test against it:

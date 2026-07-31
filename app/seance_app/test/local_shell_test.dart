@@ -5,6 +5,7 @@ import 'package:seance_app/app_state.dart';
 import 'package:seance_app/services/app_settings.dart';
 import 'package:seance_app/services/local_shell_service.dart';
 import 'package:seance_app/services/xterm_engine.dart';
+import 'package:seance_app/ui/server_appearance.dart';
 import 'package:seance_app/ui/server_list_pane.dart';
 import 'package:seance_core/seance_core.dart';
 
@@ -263,6 +264,14 @@ void main() {
       expect(find.byIcon(Icons.circle_outlined), findsNothing);
     });
 
+    testWidgets('wears the same badge shape as a server row', (tester) async {
+      // Structurally a server row — badge, corner status dot — so the list
+      // reads as one thing. The glyph is what says which kind it is.
+      await pump(tester, tabCount: 0);
+      expect(find.byType(ServerAvatar), findsOneWidget);
+      expect(find.byIcon(Icons.terminal), findsOneWidget);
+    });
+
     testWidgets('counts its tabs only once there is more than one',
         (tester) async {
       await pump(tester, tabCount: 1);
@@ -306,7 +315,7 @@ void main() {
     testWidgets('a running shell shows the connected dot', (tester) async {
       await pump(tester, tabCount: 1, connection: TerminalStatus.connected);
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      expect(find.byIcon(Icons.circle), findsOneWidget);
+      expect(find.byTooltip('connected'), findsOneWidget);
     });
   });
 

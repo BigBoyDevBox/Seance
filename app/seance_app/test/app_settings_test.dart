@@ -140,6 +140,35 @@ void main() {
     expect(restored.editorRegistry.editors.single.displayName, 'BBEdit');
   });
 
+  test('collapsed server groups round-trip and are stored sorted', () {
+    final settings = AppSettings(
+      collapsedServerGroups: {'production', 'ci', 'home lab'},
+    );
+    final json = settings.toJson();
+    expect(json['collapsedServerGroups'], ['ci', 'home lab', 'production']);
+    expect(
+      AppSettings.fromJson(json).collapsedServerGroups,
+      {'ci', 'home lab', 'production'},
+    );
+  });
+
+  test('a missing or malformed collapsed-group list reads as empty', () {
+    expect(AppSettings().collapsedServerGroups, isEmpty);
+
+    final missing = AppSettings().toJson()..remove('collapsedServerGroups');
+    expect(AppSettings.fromJson(missing).collapsedServerGroups, isEmpty);
+
+    // Hand-edited or downgraded: keep the strings, drop what isn't one,
+    // rather than failing the whole settings load over folded sections.
+    final messy = AppSettings().toJson()
+      ..['collapsedServerGroups'] = ['ci', 7, null, 'ci'];
+    expect(AppSettings.fromJson(messy).collapsedServerGroups, {'ci'});
+
+    final wrongShape = AppSettings().toJson()
+      ..['collapsedServerGroups'] = 'production';
+    expect(AppSettings.fromJson(wrongShape).collapsedServerGroups, isEmpty);
+  });
+
   test(
     'concurrent saves are serialized without corrupting the index',
     () async {
