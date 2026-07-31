@@ -16,15 +16,18 @@ void main() {
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('seance-migration-');
+    // Registered here, not as a bare tearDown: if createTemp throws there is
+    // nothing to clean up, and a tearDown that reached for `root` anyway would
+    // die of a LateInitializationError — hiding the failure that actually
+    // matters behind one that does not.
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
     // Mirrors the real shape: staging is created beside the support directory,
     // so `support` must have a parent it can be renamed within.
     support = Directory('${root.path}/Application Support/com.lkm.seanceApp')
       ..createSync(recursive: true);
     legacy = Directory('${root.path}/container')..createSync(recursive: true);
-  });
-
-  tearDown(() async {
-    if (await root.exists()) await root.delete(recursive: true);
   });
 
   SandboxMigration migration() =>

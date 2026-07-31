@@ -58,7 +58,7 @@ class LocalShellService {
   String get unavailableReason => localShellUnavailableReason(platform);
 
   /// True when the shell would run inside macOS's App Sandbox — which the
-  /// child inherits, so `\$HOME` is Séance's container, anything outside it is
+  /// child inherits, so `$HOME` is Séance's container, anything outside it is
   /// unreadable, and the shell cannot take control of the terminal for job
   /// control.
   ///
