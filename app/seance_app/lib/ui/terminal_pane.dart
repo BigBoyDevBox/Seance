@@ -74,7 +74,7 @@ class TerminalPane extends StatelessWidget {
                   activeSessionId: state.activeSessionId,
                   onFocus: state.focusSession,
                   onClose: (id) => _closeTab(context, state, id),
-                  onNewTab: () => state.newTab(active.config),
+                  onNewTab: () => state.duplicateTab(active),
                   onGenerateCommand: () => openCommandGenerator(state),
                   onRename: state.renameSession,
                 ),
@@ -133,9 +133,11 @@ class TerminalPane extends StatelessWidget {
       leading: onBack != null
           ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: onBack)
           : null,
-      title: Text(active?.config.label ?? 'Terminal'),
+      title: Text(active?.displayLabel ?? 'Terminal'),
       actions: [
-        if (active != null)
+        // Not offered for a local shell: there is no remote side to browse,
+        // and a permanently-disabled button reads as something being broken.
+        if (active != null && !active.isLocal)
           IconButton(
             tooltip: 'Remote files',
             icon: const Icon(Icons.folder_outlined),
@@ -150,9 +152,11 @@ class TerminalPane extends StatelessWidget {
           ),
         if (status == TerminalStatus.connected)
           IconButton(
-            tooltip: 'Disconnect',
-            icon: const Icon(Icons.link_off),
-            onPressed: () => state.disconnect(active!.id),
+            tooltip: active!.isLocal ? 'End this shell' : 'Disconnect',
+            icon: Icon(
+              active.isLocal ? Icons.stop_circle_outlined : Icons.link_off,
+            ),
+            onPressed: () => state.disconnect(active.id),
           ),
         if (status == TerminalStatus.error ||
             status == TerminalStatus.disconnected)
@@ -433,7 +437,6 @@ class _TabChip extends StatelessWidget {
     final overlay = Overlay.of(context).context.findRenderObject();
     if (overlay is! RenderBox) return;
     final metadata = session.metadata.value;
-    final config = session.config;
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -455,7 +458,7 @@ class _TabChip extends StatelessWidget {
           child: Text(
             sessionTabTooltip(
               ordinal: ordinal,
-              target: '${config.username}@${config.host}:${config.port}',
+              target: session.displayTarget,
               customName: session.customName.value,
               workingDirectory: metadata.workingDirectory,
               terminalTitle: metadata.terminalTitle,
@@ -479,7 +482,6 @@ class _TabChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final config = session.config;
     final metadata = session.metadata.value;
     // Middle-click closes, matching browser/terminal tab conventions.
     //
@@ -512,8 +514,7 @@ class _TabChip extends StatelessWidget {
           triggerMode: TooltipTriggerMode.manual,
           message: sessionTabTooltip(
             ordinal: ordinal,
-            target:
-                '${config.username}@${config.host}:${config.port}',
+            target: session.displayTarget,
             customName: session.customName.value,
             workingDirectory: metadata.workingDirectory,
             terminalTitle: metadata.terminalTitle,
@@ -581,7 +582,6 @@ class SessionStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final config = session.config;
     final style = Theme.of(context).textTheme.labelSmall?.copyWith(
       color: scheme.onSurfaceVariant,
       fontFamily: 'monospace',
@@ -597,10 +597,7 @@ class SessionStatusBar extends StatelessWidget {
         children: [
           _TabStatusDot(status: session.status),
           const SizedBox(width: 8),
-          Text(
-            '${config.username}@${config.host}:${config.port}',
-            style: style,
-          ),
+          Text(session.displayTarget, style: style),
           const SizedBox(width: 12),
           Expanded(
             child: ValueListenableBuilder<SessionMetadata>(
@@ -815,7 +812,7 @@ class _SessionViewState extends State<_SessionView> {
         : (keys.isControlPressed && keys.isShiftPressed);
     // Open another tab for this server: ⌘T / Ctrl+Shift+T.
     if (clip && event.logicalKey == LogicalKeyboardKey.keyT) {
-      widget.state.newTab(widget.tab.config);
+      widget.state.duplicateTab(widget.tab);
       return KeyEventResult.handled;
     }
     if (clip && event.logicalKey == LogicalKeyboardKey.keyC) {
@@ -903,10 +900,13 @@ class _ConnectionError extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.link_off, size: 40),
+              Icon(
+                tab.isLocal ? Icons.terminal_outlined : Icons.link_off,
+                size: 40,
+              ),
               const SizedBox(height: 12),
               Text(
-                'Connection failed',
+                tab.isLocal ? 'Could not start a shell' : 'Connection failed',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
@@ -917,8 +917,12 @@ class _ConnectionError extends StatelessWidget {
                 icon: const Icon(Icons.refresh),
                 label: const Text('Retry'),
               ),
-              const SizedBox(height: 12),
-              _ConnectionLogView(session: tab),
+              // Nothing produced a handshake transcript for a local shell —
+              // its one-line failure is the whole story.
+              if (!tab.isLocal) ...[
+                const SizedBox(height: 12),
+                _ConnectionLogView(session: tab),
+              ],
             ],
           ),
         ),
@@ -932,6 +936,16 @@ class _Disconnected extends StatelessWidget {
   final AppState state;
   const _Disconnected({required this.tab, required this.state});
 
+  /// How the session ended. A local shell knows its exit status, and a
+  /// non-zero one is worth surfacing: it separates "you typed exit" from "it
+  /// died", which otherwise look identical once the pane has replaced it.
+  static String _ended(TerminalSession tab) {
+    if (!tab.isLocal) return 'The session ended.';
+    final code = tab.shellExitCode;
+    if (code == null || code == 0) return 'The shell exited.';
+    return 'The shell exited with status $code.';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Center(
@@ -940,19 +954,22 @@ class _Disconnected extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.power_off_outlined, size: 40),
+            Icon(
+              tab.isLocal ? Icons.terminal_outlined : Icons.power_off_outlined,
+              size: 40,
+            ),
             const SizedBox(height: 12),
             Text(
-              'Disconnected',
+              tab.isLocal ? 'Shell exited' : 'Disconnected',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            const Text('The session ended.', textAlign: TextAlign.center),
+            Text(_ended(tab), textAlign: TextAlign.center),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: () => state.reconnect(tab.id),
               icon: const Icon(Icons.refresh),
-              label: const Text('Reconnect'),
+              label: Text(tab.isLocal ? 'New shell' : 'Reconnect'),
             ),
           ],
         ),
