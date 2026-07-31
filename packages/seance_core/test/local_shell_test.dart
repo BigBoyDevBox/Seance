@@ -27,7 +27,14 @@ class FakeLocalPty implements LocalPty {
   void resize(TerminalSize size) => resizes.add(size);
 
   @override
-  void kill() => killCount++;
+  void kill() {
+    killCount++;
+    // A real pty's child dies here: its output stream ends and its exit code
+    // resolves. Leaving those hanging would let a future `close()` that awaits
+    // the exit code hang silently instead of failing.
+    if (!_output.isClosed) _output.close();
+    if (!_exit.isCompleted) _exit.complete(-15); // SIGTERM
+  }
 
   String get writtenText => utf8.decode(written, allowMalformed: true);
 
@@ -37,6 +44,17 @@ class FakeLocalPty implements LocalPty {
   Future<void> exit(int status) async {
     await _output.close();
     if (!_exit.isCompleted) _exit.complete(status);
+  }
+}
+
+/// Whether [engine] has been disposed. `HeadlessTerminalEngine.dispose` closes
+/// the input controller, so typing into it afterwards throws.
+bool _isDisposed(HeadlessTerminalEngine engine) {
+  try {
+    engine.type('');
+    return false;
+  } on StateError {
+    return true;
   }
 }
 
@@ -312,14 +330,42 @@ void main() {
       expect(pty.killCount, 1);
     });
 
-    test('user input after the shell exits is dropped, not written', () async {
+    test('an exiting shell tears itself down before anyone is told', () async {
+      // The app's onClosed only nulls its reference to the transport; it does
+      // not close it. That is correct *because* teardown has already happened
+      // by the time the callback runs — this is the test that says so.
       final pty = FakeLocalPty();
       final engine = HeadlessTerminalEngine();
-      await startWith(pty, engine);
+      final session = await startWith(pty, engine);
+      var engineDisposedWhenNotified = false;
+      session.onClosed = () {
+        engineDisposedWhenNotified = _isDisposed(engine);
+      };
+
       await pty.exit(0);
       await pumpEventQueue();
 
+      expect(session.isClosed, isTrue);
+      expect(pty.killCount, 1);
+      expect(engineDisposedWhenNotified, isTrue,
+          reason: 'the engine must be disposed before onClosed fires');
+    });
+
+    test('a keystroke racing the exit never reaches the dead pty', () async {
+      final pty = FakeLocalPty();
+      final engine = HeadlessTerminalEngine();
+      await startWith(pty, engine);
+
+      // Between the child exiting and teardown finishing there is a drain
+      // window; nothing typed in it may be written to a pty with no child.
+      await pty.exit(0);
+      engine.type('rm -rf /\r');
+      await pumpEventQueue();
+
       expect(pty.writtenText, isEmpty);
+      // And once teardown is done the engine itself is gone, so there is no
+      // path left from a keystroke to the pty at all.
+      expect(() => engine.type('ls\r'), throwsStateError);
     });
 
     test('a shell that cannot be spawned surfaces one readable line', () async {

@@ -285,16 +285,26 @@ class LocalShellSession implements SessionTransport {
     );
     _subs.add(
       engine.userInput.listen((data) {
-        if (!_closed) pty.write(Uint8List.fromList(data));
+        if (_live) pty.write(Uint8List.fromList(data));
       }),
     );
-    pty.exitCode.then(_childExited).catchError((_) => _childExited(-1));
+    // Two-argument `then` on purpose: `onError` here handles a failure of the
+    // exit-code future itself. `.then(_childExited).catchError(…)` would also
+    // swallow anything teardown threw and re-enter _childExited, where
+    // `_closed` makes it return — losing the original error entirely.
+    pty.exitCode.then(_childExited, onError: (_) => _childExited(-1));
   }
+
+  /// Whether the far end can still take bytes. [_exited] matters as well as
+  /// [_closed]: between the child exiting and teardown finishing there is a
+  /// drain window in which the pty is dead but the session is not yet closed,
+  /// and `LocalPty` promises nothing about a write in it.
+  bool get _live => !_closed && !_exited;
 
   @override
   void resize(TerminalSize size) {
     engine.resize(size);
-    if (!_closed) pty.resize(size);
+    if (_live) pty.resize(size);
   }
 
   Future<void> _childExited(int status) async {

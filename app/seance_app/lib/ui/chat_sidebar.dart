@@ -83,7 +83,7 @@ class _ChatSidebarState extends State<ChatSidebar> {
           sessionTarget: targetSession == null
               ? null
               : targetSession.isLocal
-              ? 'this machine (a local shell — ${targetSession.displayTarget})'
+              ? 'a local shell — ${targetSession.displayTarget}'
               : targetSession.displayTarget,
         ),
       );
