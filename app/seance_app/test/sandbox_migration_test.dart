@@ -16,7 +16,10 @@ void main() {
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('seance-migration-');
-    support = Directory('${root.path}/support')..createSync(recursive: true);
+    // Mirrors the real shape: staging is created beside the support directory,
+    // so `support` must have a parent it can be renamed within.
+    support = Directory('${root.path}/Application Support/com.lkm.seanceApp')
+      ..createSync(recursive: true);
     legacy = Directory('${root.path}/container')..createSync(recursive: true);
   });
 
@@ -84,10 +87,21 @@ void main() {
       writeLegacy('settings.json', '{}');
       await migration().run();
       expect(
-        Directory('${support.path}/${SandboxMigration.stagingName}')
+        Directory('${support.parent.path}/${SandboxMigration.stagingName}')
             .existsSync(),
         isFalse,
       );
+    });
+
+    test('a stray dot-file does not block it, and is not destroyed', () async {
+      // Someone opened ~/Library/Application Support in Finder. That must
+      // neither read as "this install is in use" nor cost them the file.
+      File('${support.path}/.DS_Store').writeAsStringSync('finder');
+      writeLegacy('settings.json', '{"deviceId":"abc"}');
+
+      expect(await migration().run(), SandboxMigrationOutcome.migrated);
+      expect(jsonDecode(readSupport('settings.json'))['deviceId'], 'abc');
+      expect(File('${support.path}/.DS_Store').existsSync(), isTrue);
     });
   });
 
@@ -130,7 +144,7 @@ void main() {
       // This is the failure the staging design exists to prevent: a partial
       // copy that reads as "already migrated" would strand the rest forever.
       final staging = Directory(
-        '${support.path}/${SandboxMigration.stagingName}',
+        '${support.parent.path}/${SandboxMigration.stagingName}',
       )..createSync(recursive: true);
       File('${staging.path}/settings.json').writeAsStringSync('{"half":true}');
       writeLegacy('settings.json', '{"deviceId":"abc"}');
@@ -140,25 +154,21 @@ void main() {
       expect(staging.existsSync(), isFalse);
     });
 
-    test('a failure reports itself and leaves the destination empty',
+    test('a container that vanished first reports noLegacyData, not failure',
         () async {
-      writeLegacy('settings.json', '{}');
       await legacy.delete(recursive: true);
-      // A container that vanishes between the check and the copy is the
-      // stand-in for any mid-run I/O failure.
       final run = SandboxMigration(support: support, legacySupport: legacy);
-      final outcome = await run.run();
 
-      expect(outcome, SandboxMigrationOutcome.noLegacyData);
+      expect(await run.run(), SandboxMigrationOutcome.noLegacyData);
       expect(run.error, isNull);
       expect(support.listSync(), isEmpty);
     });
 
-    test('a destination that cannot be written reports failed', () async {
+    test('a staging path that cannot be created reports failed', () async {
       writeLegacy('settings.json', '{}');
       // A file where the staging directory needs to go: create() throws, which
       // is the closest reliable stand-in for a full or read-only disk.
-      File('${support.path}/${SandboxMigration.stagingName}')
+      File('${support.parent.path}/${SandboxMigration.stagingName}')
           .writeAsStringSync('not a directory');
       final run = SandboxMigration(support: support, legacySupport: legacy);
 
@@ -166,6 +176,39 @@ void main() {
       expect(run.error, isNotNull);
       expect(File('${support.path}/settings.json').existsSync(), isFalse,
           reason: 'a failed run must not leave a half-migrated install');
+    });
+
+    test('a copy that dies partway leaves the destination untouched',
+        () async {
+      // The real hazard, reproduced: several files copy, then one cannot.
+      // Everything the app can see must still be exactly as it was, because a
+      // destination holding half an install is indistinguishable from one
+      // that is simply in use — and the next launch would skip the rest.
+      writeLegacy('settings.json', '{"deviceId":"abc"}');
+      writeLegacy('servers.json', '[]');
+      writeLegacy('vault.json', '{"secret-1":"blob"}');
+      writeLegacy('sftp-checkouts/session-1/notes.txt', 'hello');
+
+      var copied = 0;
+      final run = SandboxMigration(
+        support: support,
+        legacySupport: legacy,
+        copyFile: (from, to) async {
+          if (++copied == 3) throw const FileSystemException('disk full');
+          await from.copy(to);
+        },
+      );
+      expect(await run.run(), SandboxMigrationOutcome.failed);
+      expect(run.error, isNotNull);
+      expect(support.listSync(), isEmpty,
+          reason: 'all-or-nothing: no partial install may become visible');
+      expect(
+        Directory('${support.parent.path}/${SandboxMigration.stagingName}')
+            .existsSync(),
+        isFalse,
+      );
+      // And the container is still whole, so the next launch can retry.
+      expect(File('${legacy.path}/settings.json').existsSync(), isTrue);
     });
   });
 
@@ -180,6 +223,21 @@ void main() {
         resolved!.legacySupport.path,
         '/Users/ada/Library/Containers/com.lkm.seanceApp/Data'
         '/Library/Application Support/com.lkm.seanceApp',
+      );
+    });
+
+    test('stages beside the support directory, never inside it', () {
+      // Inside would mean the destination is non-empty during the copy, which
+      // both defeats the atomic rename and risks reading as "already in use".
+      final resolved = SandboxMigration.forSupportDirectory(
+        Directory('/Users/ada/Library/Application Support/com.lkm.seanceApp'),
+        home: '/Users/ada',
+        isMacOS: true,
+      );
+      expect(
+        resolved!.staging.path,
+        '/Users/ada/Library/Application Support/'
+        '${SandboxMigration.stagingName}',
       );
     });
 

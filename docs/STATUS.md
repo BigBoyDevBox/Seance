@@ -42,10 +42,13 @@ The local shell is why, and the trade is deliberate rather than incidental.
   both entitlements files.
 - **What existing installs see.** `SandboxMigration` copies the whole support
   tree out of `~/Library/Containers/<bundle id>/…` on the first unsandboxed
-  launch, before any store is opened. It copies rather than moves, stages then
-  moves into place so an interrupted run cannot look finished, and only runs
-  into a destination that is still empty. A failure is surfaced as a toast and
-  retried next launch; success is silent.
+  launch, before any store is opened. It copies rather than moves, and lands
+  the copy with a single directory rename so the result is all-or-nothing —
+  a half-filled directory would read as "already in use" next launch and
+  strand the remainder for good. A failure **stops startup** with an
+  explanation rather than starting empty, because everything after that point
+  writes and any one write would make the retry impossible. Success is
+  silent.
 - **The one thing that is not transparent.** The login-keychain ACL is bound
   to the code signature, so every user gets one *"Séance wants to use your
   confidential information"* prompt. That is not new — ad-hoc signing means an
@@ -81,8 +84,10 @@ for the manual checklist to run before releasing an unsandboxed build.
 - `seance_app/test/sandbox_migration_test.dart` — the container copy against
   real temp directories: every store plus the nested checkout tree, the
   container left intact, a live install never overwritten by a stale
-  container, a leftover staging directory not mistaken for data, and a failed
-  run leaving the destination empty.
+  container, a stray `.DS_Store` neither blocking the migration nor being
+  destroyed by it, a leftover staging directory not mistaken for data, and —
+  the one that matters — a copy that dies partway leaving the destination
+  completely untouched.
 - `seance_app/test/master_key_test.dart` — a master key is minted on a genuine
   first run, read back when present, and **never** replaced when a vault
   already exists.

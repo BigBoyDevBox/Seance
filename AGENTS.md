@@ -274,11 +274,15 @@ compiles the app for android/linux/macos/ios/windows on their native runners
 
 ## 4. How things were verified (so you can re-verify)
 
-- 221 Dart tests + 271 Flutter tests, all analyze clean.
+- 221 Dart tests + 274 Flutter tests, all analyze clean.
 - The sandbox-container migration is tested against **real temp directories**
   (`test/sandbox_migration_test.dart`) — the thing under test is filesystem
   behaviour, and a fake would prove nothing about the case that matters: an
   interrupted copy that leaves an install looking migrated when it is not.
+  `SandboxMigration.copyFile` is injectable for exactly one reason: a mid-copy
+  failure cannot be provoked with permissions here, because CI and the dev
+  container both run as **root**, where `chmod 000` keeps nothing out.
+
   What is **not** covered anywhere is the macOS half of the story — no Mac ran
   any of this. Before releasing an unsandboxed build, verify by hand on a Mac
   with an existing sandboxed install: data appears after the first launch
@@ -399,10 +403,16 @@ Do not "simplify" these away — they are load-bearing:
   signing binds the ACL to an exact code hash, so **every rebuild you install
   asks again**.
 - `SandboxMigration` — copies an install's data out of the macOS App Sandbox
-  container that older builds used. Staged then moved, so an interrupted run
-  leaves the destination empty rather than half-populated (a partial copy that
-  read as "already migrated" would strand the rest forever), and the container
-  is copied, never moved.
+  container that older builds used. The whole tree is copied to a staging
+  directory *beside* the destination and put in place with **one directory
+  rename**, so what the app can see is all-or-nothing. That is load-bearing:
+  a half-filled support directory is indistinguishable from one already in
+  use, so the next launch would skip the migration and strand the remainder
+  silently and forever. The container is copied, never moved.
+  **A failed migration ends startup** (`SandboxMigrationFailure`) rather than
+  letting the app continue — everything after that point writes, and the
+  `deviceId` mint alone creates `settings.json`, which is enough to make the
+  retry impossible. Refusing to launch is what keeps "quit and reopen" true.
 - `SessionTransport` (`seance_core`) — what carries a session's bytes:
   `SshSession` (dartssh2) or `LocalShellSession` (a local pty). Four members —
   `resize`, `close`, `isClosed`, `onClosed` — and `close()` **owns disposing

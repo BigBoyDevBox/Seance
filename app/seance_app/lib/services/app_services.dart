@@ -77,15 +77,6 @@ class AppServices {
   final IdentityFileBookmarks identityBookmarks;
   final IdentityAuditLog identityAudit;
   final LocalShellService localShell;
-
-  /// What the one-time move out of a macOS sandbox container did at startup.
-  /// [SandboxMigrationOutcome.failed] is surfaced to the user; everything else
-  /// is silent, because a migration that worked is not news.
-  final SandboxMigrationOutcome sandboxMigration;
-
-  /// Why the migration failed, when it did.
-  final Object? sandboxMigrationError;
-
   List<int> vaultKey;
   AppSettings settings;
 
@@ -104,8 +95,6 @@ class AppServices {
     required this.identityBookmarks,
     required this.identityAudit,
     required this.localShell,
-    required this.sandboxMigration,
-    required this.sandboxMigrationError,
     required this.vaultKey,
     required this.settings,
   });
@@ -118,9 +107,22 @@ class AppServices {
     // sandboxed build keeps its data inside a container this build no longer
     // looks in. Running first means the stores below open the migrated files
     // rather than creating empty ones beside them.
+    //
+    // A failure here ends startup. Everything below this line writes — the
+    // deviceId mint alone creates settings.json — and any one of those writes
+    // makes the next launch see a directory in use and skip the migration for
+    // good. Carrying on would therefore convert a recoverable failure into
+    // permanent stranding, while showing the user an app that looks wiped.
     final migration = SandboxMigration.forSupportDirectory(dir);
-    final migrationOutcome =
-        await migration?.run() ?? SandboxMigrationOutcome.noLegacyData;
+    if (migration != null) {
+      final outcome = await migration.run();
+      if (outcome == SandboxMigrationOutcome.failed) {
+        throw SandboxMigrationFailure(
+          migration.legacySupport,
+          migration.error ?? 'unknown error',
+        );
+      }
+    }
 
     final vaultFile = File(p('vault.json'));
     final masterKeys = MasterKeyManager();
@@ -170,8 +172,6 @@ class AppServices {
       identityBookmarks: IdentityFileBookmarks(),
       identityAudit: IdentityAuditLog(File(p('identity_reads.jsonl'))),
       localShell: LocalShellService(),
-      sandboxMigration: migrationOutcome,
-      sandboxMigrationError: migration?.error,
       vaultKey: vaultKey,
       settings: settings,
     );
