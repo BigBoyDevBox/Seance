@@ -6,6 +6,83 @@ AuthMethod _authFromName(String name) =>
     AuthMethod.values.firstWhere((m) => m.name == name,
         orElse: () => AuthMethod.password);
 
+/// A server's accent color, as a *name* rather than an ARGB value.
+///
+/// Two reasons it is a closed set. A raw color would have to be picked once and
+/// then read on every theme: a hand-chosen `0xFF2E2E2E` that looks sober in
+/// light mode disappears in dark mode, and this list is rendered against both.
+/// A name lets the app derive a matching container/foreground pair per
+/// brightness instead (see the app's `ServerAppearance`). And because the value
+/// syncs, a closed set is also what keeps a future device from being handed a
+/// color it has no sensible way to render.
+///
+/// The hues are the app's own, not the terminal palette's: this tags *which
+/// box you are on*, which must stay legible whatever colors the remote shell
+/// is painting with.
+enum ServerColor {
+  violet,
+  blue,
+  cyan,
+  teal,
+  green,
+  amber,
+  orange,
+  red,
+  pink,
+  slate,
+}
+
+/// A server's icon, again as a name from a closed set.
+///
+/// Beyond the sync argument above, Flutter's `--tree-shake-icons` build step
+/// only keeps glyphs it can see referenced by a *const* `IconData`. Storing an
+/// arbitrary codepoint and rendering `Icon(IconData(stored))` compiles fine and
+/// then ships a release build with blank squares where the icons were. A name
+/// mapped to a const `IconData` in the app keeps the whole feature tree-shakable.
+enum ServerIcon {
+  server,
+  cloud,
+  database,
+  web,
+  terminal,
+  shield,
+  home,
+  work,
+  lab,
+  device,
+  router,
+  mail,
+  container,
+  rocket,
+  star,
+  bug,
+}
+
+/// Decode a [ServerColor] name, or null when absent *or unrecognized*.
+///
+/// Unlike [_authFromName] this deliberately has no fallback value: a newer
+/// device may have tagged a server with a color this build has never heard of,
+/// and showing the wrong color is worse than showing none. Round-tripping is
+/// still lossy for that record (see [ServerConfig.color]) — this only decides
+/// what gets drawn meanwhile.
+ServerColor? _colorFromName(String? name) {
+  if (name == null) return null;
+  for (final c in ServerColor.values) {
+    if (c.name == name) return c;
+  }
+  return null;
+}
+
+/// Decode a [ServerIcon] name, or null when absent or unrecognized. See
+/// [_colorFromName] for why there is no fallback.
+ServerIcon? _iconFromName(String? name) {
+  if (name == null) return null;
+  for (final i in ServerIcon.values) {
+    if (i.name == name) return i;
+  }
+  return null;
+}
+
 /// A configured SSH server. This is non-secret metadata: the actual password or
 /// private key lives in the encrypted vault and is referenced here by [secretRef].
 class ServerConfig {
@@ -30,6 +107,35 @@ class ServerConfig {
   /// Whether the referenced secret is allowed to sync (opt-in per item).
   final bool syncSecret;
 
+  /// The group this server is filed under in the list, or null for none.
+  ///
+  /// A plain name carried by the member, not a reference to a group *record*.
+  /// Records sync last-writer-wins and independently, so a first-class group
+  /// entity would let one device delete a group while another files a server
+  /// into it — leaving a config pointing at nothing, with no round to repair it.
+  /// A name cannot dangle: the group exists exactly as long as a server says it
+  /// does. The cost is that renaming a group rewrites its members, which for a
+  /// few dozen rarely-edited servers is not a cost worth designing around.
+  ///
+  /// Grouping is case-insensitive but the spelling is preserved, so a server
+  /// typed into `prod` joins `Prod` rather than starting a near-identical
+  /// second group.
+  final String? group;
+
+  /// An accent color for this server, or null to stay neutral. Non-functional
+  /// by design: it distinguishes rows at a glance and tints the terminal's tab
+  /// strip so "which box am I on" is answerable without reading.
+  ///
+  /// Null also covers *unrecognized*: a color added in a later version decodes
+  /// here as null, and this device re-pushing the record will drop it. That is
+  /// the same lossy-downgrade the record layer already has for any added field,
+  /// and it costs a color rather than a credential.
+  final ServerColor? color;
+
+  /// An icon for this server, or null for the default. See [color] for the
+  /// unrecognized-value behavior, which is identical.
+  final ServerIcon? icon;
+
   final int createdAt;
   final int updatedAt;
 
@@ -44,6 +150,9 @@ class ServerConfig {
     this.identityFilePath,
     this.jumpHostId,
     this.syncSecret = false,
+    this.group,
+    this.color,
+    this.icon,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -61,6 +170,12 @@ class ServerConfig {
     String? jumpHostId,
     bool clearJumpHostId = false,
     bool? syncSecret,
+    String? group,
+    bool clearGroup = false,
+    ServerColor? color,
+    bool clearColor = false,
+    ServerIcon? icon,
+    bool clearIcon = false,
     int? updatedAt,
   }) {
     return ServerConfig(
@@ -76,6 +191,9 @@ class ServerConfig {
           : (identityFilePath ?? this.identityFilePath),
       jumpHostId: clearJumpHostId ? null : (jumpHostId ?? this.jumpHostId),
       syncSecret: syncSecret ?? this.syncSecret,
+      group: clearGroup ? null : (group ?? this.group),
+      color: clearColor ? null : (color ?? this.color),
+      icon: clearIcon ? null : (icon ?? this.icon),
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -92,6 +210,9 @@ class ServerConfig {
         if (identityFilePath != null) 'identityFilePath': identityFilePath,
         if (jumpHostId != null) 'jumpHostId': jumpHostId,
         'syncSecret': syncSecret,
+        if (group != null) 'group': group,
+        if (color != null) 'color': color!.name,
+        if (icon != null) 'icon': icon!.name,
         'createdAt': createdAt,
         'updatedAt': updatedAt,
       };
@@ -107,7 +228,28 @@ class ServerConfig {
         identityFilePath: json['identityFilePath'] as String?,
         jumpHostId: json['jumpHostId'] as String?,
         syncSecret: json['syncSecret'] as bool? ?? false,
+        // Normalized on the way in as well as on the way out: a group that is
+        // blank or all whitespace is "no group", and letting one through would
+        // put a nameless section in the list on the device that read it.
+        group: normalizeServerGroup(json['group'] as String?),
+        color: _colorFromName(json['color'] as String?),
+        icon: _iconFromName(json['icon'] as String?),
         createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
         updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
       );
 }
+
+/// The stored form of a group name: trimmed, with blank meaning "no group".
+///
+/// Interior whitespace is left alone — `web servers` is a name someone meant to
+/// type — but the edges are not, so `prod ` and `prod` are never two groups.
+String? normalizeServerGroup(String? group) {
+  if (group == null) return null;
+  final trimmed = group.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+/// The key two group names are considered the same under: case-insensitive, so
+/// `Prod` and `prod` are one group rather than two adjacent near-identical
+/// sections. The displayed spelling is whichever member is listed first.
+String serverGroupKey(String group) => group.toLowerCase();

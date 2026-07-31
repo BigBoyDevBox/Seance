@@ -21,6 +21,96 @@ void main() {
       expect(back.authMethod, AuthMethod.privateKey);
     });
 
+    test('ServerConfig presentation fields', () {
+      final c = ServerConfig(
+        id: 's1',
+        label: 'prod web',
+        host: 'web.example.com',
+        username: 'deploy',
+        group: 'Production',
+        color: ServerColor.red,
+        icon: ServerIcon.rocket,
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      final back = ServerConfig.fromJson(c.toJson());
+      expect(back.toJson(), equals(c.toJson()));
+      expect(back.group, 'Production');
+      expect(back.color, ServerColor.red);
+      expect(back.icon, ServerIcon.rocket);
+    });
+
+    test('ServerConfig omits the presentation fields when they are unset', () {
+      final json = ServerConfig(
+        id: 's1',
+        label: 'plain',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      ).toJson();
+      // A config written before these existed is byte-identical to one that
+      // simply doesn't use them, so an upgrade rewrites nothing.
+      expect(json.containsKey('group'), isFalse);
+      expect(json.containsKey('color'), isFalse);
+      expect(json.containsKey('icon'), isFalse);
+    });
+
+    test('ServerConfig tolerates a group or an accent it does not know', () {
+      final base = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      ).toJson();
+      // A colour or icon added by a later version decodes as "none" rather
+      // than as a wrong one, and a blank group is no group.
+      final decoded = ServerConfig.fromJson({
+        ...base,
+        'group': '   ',
+        'color': 'chartreuse',
+        'icon': 'toaster',
+      });
+      expect(decoded.group, isNull);
+      expect(decoded.color, isNull);
+      expect(decoded.icon, isNull);
+    });
+
+    test('group names normalize their edges but not their middle', () {
+      expect(normalizeServerGroup('  Home lab  '), 'Home lab');
+      expect(normalizeServerGroup('   '), isNull);
+      expect(normalizeServerGroup(null), isNull);
+      expect(serverGroupKey('Home Lab'), serverGroupKey('home lab'));
+    });
+
+    test('copyWith can clear the presentation fields as well as set them', () {
+      final tagged = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        group: 'Production',
+        color: ServerColor.red,
+        icon: ServerIcon.rocket,
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      expect(tagged.copyWith(color: ServerColor.teal).color, ServerColor.teal);
+      // Null alone means "unchanged" in copyWith, so clearing needs its own
+      // flag — the same shape secretRef and jumpHostId already use.
+      expect(tagged.copyWith(color: null).color, ServerColor.red);
+      final cleared = tagged.copyWith(
+        clearGroup: true,
+        clearColor: true,
+        clearIcon: true,
+      );
+      expect(cleared.group, isNull);
+      expect(cleared.color, isNull);
+      expect(cleared.icon, isNull);
+    });
+
     test('Secret does not leak its value in toString', () {
       final s = Secret(id: 's1', kind: SecretKind.password, value: 'hunter2');
       expect(s.toString(), isNot(contains('hunter2')));

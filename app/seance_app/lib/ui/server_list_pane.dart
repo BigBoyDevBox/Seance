@@ -8,8 +8,10 @@ import '../main.dart';
 import '../theme.dart';
 import 'app_menus.dart';
 import 'middle_ellipsis_text.dart';
+import 'server_appearance.dart';
 import 'server_editor.dart';
 import 'server_filter.dart';
+import 'server_grouping.dart';
 import 'settings_screen.dart';
 
 /// Left pane / first screen: the configured servers with a reachability dot.
@@ -199,39 +201,67 @@ class _ServerListPaneState extends State<ServerListPane> {
     AppState state,
     List<ServerConfig> servers,
   ) {
+    final rows = serverListRows(
+      sections: groupServers(servers),
+      // A live query overrides every collapsed section. Otherwise the filter
+      // would report "3 of 12" and show one row, with the other two folded
+      // away behind a header the user never opened — which reads as the filter
+      // being broken rather than as the list being tidy.
+      collapsedKeys: _query.isEmpty ? state.collapsedServerGroups : const {},
+    );
     return ListView.separated(
-      itemCount: servers.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, i) {
-        final server = servers[i];
-        final reachability = state.statuses[server.id] ?? ProbeStatus.unknown;
-        final tabs = state.sessionsForServer(server.id);
-        return _ServerTile(
-          // Stable identity so a background sync replacing the list
-          // reconciles each tile to its server instead of by position.
-          key: ValueKey(server.id),
-          server: server,
-          connection: _aggregateStatus(tabs),
-          tabCount: tabs.length,
-          reachability: reachability,
-          selected: server.id == state.activeServerId,
-          onTap: () => widget.onOpen(server),
-          onNewTab: () => state.newTab(server),
-          onEdit: () => _editServer(context, state, server),
-          onDelete: () => _deleteServer(context, state, server),
-          // Disconnect every live tab; reconnect the lone dead tab.
-          onDisconnect: () {
-            for (final t in tabs) {
-              if (t.status == TerminalStatus.connected) {
-                state.disconnect(t.id);
-              }
-            }
-          },
-          onReconnect: tabs.length == 1
-              ? () => state.reconnect(tabs.first.id)
-              : null,
-        );
+      itemCount: rows.length,
+      // Rules belong between servers, not under a section header — the
+      // header's own fill already separates it from what follows.
+      separatorBuilder: (_, i) =>
+          rows[i] is ServerRow && rows[i + 1] is ServerRow
+          ? const Divider(height: 1)
+          : const SizedBox.shrink(),
+      itemBuilder: (context, i) => switch (rows[i]) {
+        ServerGroupHeaderRow(
+          :final name,
+          :final key,
+          :final count,
+          :final collapsed,
+        ) =>
+          _GroupHeader(
+            name: name,
+            count: count,
+            collapsed: collapsed,
+            onToggle: () => state.toggleServerGroup(key),
+          ),
+        ServerRow(:final server) => _tile(context, state, server),
       },
+    );
+  }
+
+  Widget _tile(BuildContext context, AppState state, ServerConfig server) {
+    final reachability = state.statuses[server.id] ?? ProbeStatus.unknown;
+    final tabs = state.sessionsForServer(server.id);
+    return _ServerTile(
+      // Stable identity so a background sync replacing the list
+      // reconciles each tile to its server instead of by position.
+      key: ValueKey(server.id),
+      server: server,
+      connection: _aggregateStatus(tabs),
+      tabCount: tabs.length,
+      reachability: reachability,
+      selected: server.id == state.activeServerId,
+      onTap: () => widget.onOpen(server),
+      onNewTab: () => state.newTab(server),
+      onEdit: () => _editServer(context, state, server),
+      onDelete: () => _deleteServer(context, state, server),
+      // Disconnect every live tab; reconnect the lone dead tab.
+      onDisconnect: () {
+        for (final t in tabs) {
+          if (t.status == TerminalStatus.connected) {
+            state.disconnect(t.id);
+          }
+        }
+      },
+      onReconnect: tabs.length == 1
+          ? () => state.reconnect(tabs.first.id)
+          : null,
     );
   }
 
@@ -475,7 +505,7 @@ class _ServerTile extends StatelessWidget {
       leading: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ConnectionDot(status: connection),
+          ServerAvatar(server: server, connection: connection),
           if (tabCount > 1)
             Padding(
               padding: const EdgeInsets.only(left: 4),
@@ -534,41 +564,68 @@ class _ServerTile extends StatelessWidget {
   }
 }
 
-/// The prominent leading dot: the state of this server's terminal session.
-class _ConnectionDot extends StatelessWidget {
-  final TerminalStatus status;
-  const _ConnectionDot({required this.status});
+/// A collapsible section header over one group of servers.
+///
+/// Only ever built when at least one server carries a group: a list with none
+/// renders exactly as it always did, with no headers to look past.
+class _GroupHeader extends StatelessWidget {
+  final String name;
+  final int count;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  const _GroupHeader({
+    required this.name,
+    required this.count,
+    required this.collapsed,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (status == TerminalStatus.connecting) {
-      return const Tooltip(
-        message: 'connecting',
-        child: SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      // The chevron is the only thing that says which way this row goes, and
+      // it is pure decoration to a screen reader — so the state is declared.
+      child: Semantics(
+        expanded: !collapsed,
+        child: InkWell(
+          onTap: onToggle,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+            child: Row(
+              children: [
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                // A collapsed group still says how much it is hiding, so
+                // folding one away never looks like losing servers.
+                Text(
+                  '$count',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      );
-    }
-    final (color, label) = switch (status) {
-      TerminalStatus.connected => (StatusColors.online(context), 'connected'),
-      TerminalStatus.error => (
-        StatusColors.offline(context),
-        'connection error',
       ),
-      TerminalStatus.disconnected => (
-        StatusColors.unknown(context),
-        'disconnected',
-      ),
-      TerminalStatus.connecting => (
-        StatusColors.unknown(context),
-        'connecting',
-      ),
-    };
-    return Tooltip(
-      message: label,
-      child: Icon(Icons.circle, size: 12, color: color),
     );
   }
 }
