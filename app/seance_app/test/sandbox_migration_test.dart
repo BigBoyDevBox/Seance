@@ -151,6 +151,11 @@ void main() {
     });
 
     test('a fresh install with no container does nothing', () async {
+      // setUp creates the container, so it has to go for this to be the
+      // absent-directory branch rather than a second copy of the empty one
+      // below — `exists()` false and `exists()` true-but-empty are different
+      // paths through _hasData.
+      await legacy.delete(recursive: true);
       expect(await migration().run(), SandboxMigrationOutcome.noLegacyData);
     });
 
