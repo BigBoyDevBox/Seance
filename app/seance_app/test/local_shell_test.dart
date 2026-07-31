@@ -294,13 +294,19 @@ void main() {
       expect(find.text('Close all shells'), findsOneWidget);
     });
 
-    testWidgets('a running shell shows the connected dot', (tester) async {
+    testWidgets('a starting shell shows a spinner', (tester) async {
       await pump(
         tester,
         tabCount: 1,
         connection: TerminalStatus.connecting,
       );
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('a running shell shows the connected dot', (tester) async {
+      await pump(tester, tabCount: 1, connection: TerminalStatus.connected);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.circle), findsOneWidget);
     });
   });
 

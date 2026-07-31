@@ -45,6 +45,12 @@ class FakeLocalPty implements LocalPty {
     await _output.close();
     if (!_exit.isCompleted) _exit.complete(status);
   }
+
+  /// The child exits but its output never ends — the case that puts
+  /// [LocalShellSession] into its drain wait and leaves it there.
+  void exitWithoutDraining(int status) {
+    if (!_exit.isCompleted) _exit.complete(status);
+  }
 }
 
 /// Whether [engine] has been disposed. `HeadlessTerminalEngine.dispose` closes
@@ -366,6 +372,29 @@ void main() {
       // And once teardown is done the engine itself is gone, so there is no
       // path left from a keystroke to the pty at all.
       expect(() => engine.type('ls\r'), throwsStateError);
+    });
+
+    test('closing during the drain wait does not sit out the timeout',
+        () async {
+      final pty = FakeLocalPty();
+      final session = await startWith(pty, HeadlessTerminalEngine());
+      var closedCalls = 0;
+      session.onClosed = () => closedCalls++;
+
+      // The child is gone but its output stream never ends, so the session is
+      // now inside its two-second drain window.
+      pty.exitWithoutDraining(0);
+      await pumpEventQueue();
+      expect(closedCalls, 0, reason: 'still draining');
+
+      // Cancelling the output subscription does not fire onDone, so without
+      // _finish releasing the drain this would only resolve two seconds of
+      // real time later — long after the session was torn down.
+      await session.close();
+      await pumpEventQueue();
+
+      expect(closedCalls, 1);
+      expect(session.isClosed, isTrue);
     });
 
     test('a shell that cannot be spawned surfaces one readable line', () async {

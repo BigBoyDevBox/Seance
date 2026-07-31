@@ -341,6 +341,12 @@ class LocalShellSession implements SessionTransport {
   Future<void> _finish() async {
     if (_closed) return;
     _closed = true;
+    // Release anyone waiting on the drain. Cancelling a subscription does not
+    // fire `onDone`, so a close() that lands while [_childExited] is waiting
+    // out its two-second window would otherwise leave that wait to time out —
+    // firing [onClosed] two seconds after the session was already torn down,
+    // and holding the session and its engine alive until it did.
+    _complete(_outputDone);
     for (final s in _subs) {
       await s.cancel();
     }
