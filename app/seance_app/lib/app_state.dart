@@ -687,7 +687,14 @@ class AppState extends ChangeNotifier {
   Future<void> _connect(TerminalSession tab) async {
     final engine = tab.engine;
     final log = tab.log;
-    final config = tab.config!;
+    final config = tab.config;
+    if (config == null) {
+      // Unreachable: a session with no server is a local shell, and
+      // openLocalShell/newLocalTab/reconnect all route those to
+      // _startLocalShell. Named rather than left to `!` so that if a future
+      // caller does route one here, it says which invariant broke.
+      throw StateError('_connect needs a server; a local shell has none');
+    }
     try {
       final credentials = await services.resolveCredentials(config);
       final session = await _sessionManager.connect(

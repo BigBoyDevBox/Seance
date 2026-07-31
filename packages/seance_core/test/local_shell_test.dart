@@ -53,17 +53,6 @@ class FakeLocalPty implements LocalPty {
   }
 }
 
-/// Whether [engine] has been disposed. `HeadlessTerminalEngine.dispose` closes
-/// the input controller, so typing into it afterwards throws.
-bool _isDisposed(HeadlessTerminalEngine engine) {
-  try {
-    engine.type('');
-    return false;
-  } on StateError {
-    return true;
-  }
-}
-
 Future<LocalShellSession> startWith(
   FakeLocalPty pty,
   HeadlessTerminalEngine engine, {
@@ -345,7 +334,7 @@ void main() {
       final session = await startWith(pty, engine);
       var engineDisposedWhenNotified = false;
       session.onClosed = () {
-        engineDisposedWhenNotified = _isDisposed(engine);
+        engineDisposedWhenNotified = engine.isDisposed;
       };
 
       await pty.exit(0);
