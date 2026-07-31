@@ -3,7 +3,7 @@
 Living snapshot of where Séance is, what's proven, and what to pick up next.
 Read [AGENTS.md](../AGENTS.md) first for how to build/test.
 
-_Last updated: 2026-07-31 — optional local shell (Linux/macOS)._
+_Last updated: 2026-07-31 — optional local shell; macOS ships unsandboxed._
 
 ## Done (implemented + verified)
 
@@ -20,10 +20,42 @@ _Last updated: 2026-07-31 — optional local shell (Linux/macOS)._
 | Platform | Offered | Why |
 |---|---|---|
 | Linux | yes | Verified end to end against a real pty: echo, `stty size` before/after resize, `^C`, exit status, teardown. |
-| macOS | yes, sandbox-limited | Works, but the child inherits the App Sandbox: `$HOME` is Séance's container, files outside it are unreadable, and job control is unavailable (`can't set tty pgrp`). Said in Settings *before* the switch is flipped, and again as a banner in the session's own scrollback. Removing `com.apple.security.app-sandbox` would lift this — a deliberate, separate decision, since it also moves `NSHomeDirectory()` (where every store lives) and changes the signing identity the vault key's keychain ACL is bound to. |
+| macOS | yes | The App Sandbox is **off** (`macos/Runner/*.entitlements`), so the shell reaches the real `$HOME` and keeps job control. With it on the child inherits it: container-only `$HOME`, unreadable files, `can't set tty pgrp`. The warning path is kept and still fires if the entitlement is ever put back. Existing installs are migrated out of the old container on first launch (`SandboxMigration`) — see the section below. |
 | Windows | no | `flutter_pty` 0.4.2 builds a malformed command line there (see AGENTS.md §5). Vendoring the package fixes it in ~6 lines; until then the setting says so rather than shipping a broken shell. |
 | Android | no | Only toybox's `/system/bin/sh` inside the app's own sandbox, with no way to install tools. |
 | iOS/iPadOS | never | iOS apps may not spawn child processes at all. |
+
+## macOS: no App Sandbox
+
+The local shell is why, and the trade is deliberate rather than incidental.
+
+- **What it buys.** A child process inherits its parent's sandbox, so a
+  sandboxed Séance can only offer a shell confined to its own container — no
+  real `$HOME`, no files outside it, and no job control (`^C` reaches the
+  shell instead of the command). Apple's own guidance for this case is to
+  ["enable SSH on their machine if they want to run locally"](https://developer.apple.com/forums/thread/685544).
+  Séance is ad-hoc signed and distributed outside the App Store, so nothing
+  requires the sandbox.
+- **What it costs, permanently.** A compromise of Séance — or of any package
+  it depends on — now reaches everything the user can reach, and the SSH keys
+  and vault this app holds are precisely the target. Reverting is one line in
+  both entitlements files.
+- **What existing installs see.** `SandboxMigration` copies the whole support
+  tree out of `~/Library/Containers/<bundle id>/…` on the first unsandboxed
+  launch, before any store is opened. It copies rather than moves, stages then
+  moves into place so an interrupted run cannot look finished, and only runs
+  into a destination that is still empty. A failure is surfaced as a toast and
+  retried next launch; success is silent.
+- **The one thing that is not transparent.** The login-keychain ACL is bound
+  to the code signature, so every user gets one *"Séance wants to use your
+  confidential information"* prompt. That is not new — ad-hoc signing means an
+  exact code hash, so it already happens on every rebuild. What is new is that
+  dismissing it can no longer destroy the vault:
+  `loadOrCreateFromKeystore(hasExistingVault:)` refuses to mint a replacement
+  key when an encrypted vault is already on disk.
+
+None of the macOS half is verified — no Mac ran any of it. See AGENTS.md §4
+for the manual checklist to run before releasing an unsandboxed build.
 
 ## Test inventory (what proves what)
 
@@ -46,6 +78,14 @@ _Last updated: 2026-07-31 — optional local shell (Linux/macOS)._
   `LINES`/`COLUMNS`), the support matrix, and `LocalShellSession` against a
   fake pty: bytes both ways, resize, exit → `onClosed` once, late `onClosed`,
   idempotent close, spawn failure.
+- `seance_app/test/sandbox_migration_test.dart` — the container copy against
+  real temp directories: every store plus the nested checkout tree, the
+  container left intact, a live install never overwritten by a stale
+  container, a leftover staging directory not mistaken for data, and a failed
+  run leaving the destination empty.
+- `seance_app/test/master_key_test.dart` — a master key is minted on a genuine
+  first run, read back when present, and **never** replaced when a vault
+  already exists.
 - `seance_app/test/local_shell_test.dart` — the availability double gate,
   macOS sandbox detection, a session with no server (never renders `@:0`),
   local tabs grouping/fallback, the pinned row, and the setting's round-trip.

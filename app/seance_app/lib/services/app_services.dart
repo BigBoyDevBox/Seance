@@ -11,7 +11,9 @@ import 'file_stores.dart';
 import 'identity_audit_log.dart';
 import 'identity_bookmarks.dart';
 import 'local_shell_service.dart';
+import 'macos_sandbox.dart';
 import 'managed_remote_file_store.dart';
+import 'sandbox_migration.dart';
 import 'secure_master_key.dart';
 
 /// A "reference, don't store" identity file couldn't be read at connect time.
@@ -23,18 +25,30 @@ class IdentityFileException implements Exception {
   final FileSystemException cause;
   // Injectable so the hint branch is unit-testable off-macOS (CI runs Linux).
   final bool isMacOS;
-  IdentityFileException(this.path, this.cause, {bool? isMacOS})
-      : isMacOS = isMacOS ?? Platform.isMacOS;
+
+  /// Whether the sandbox is actually in force. Séance ships unsandboxed on
+  /// macOS, where an EPERM is ordinary filesystem permissions and the sandbox
+  /// advice below would send the user to fix something that isn't wrong.
+  final bool isSandboxed;
+
+  IdentityFileException(this.path, this.cause,
+      {bool? isMacOS, bool? isSandboxed})
+      : isMacOS = isMacOS ?? Platform.isMacOS,
+        isSandboxed =
+            isSandboxed ?? macOsSandboxed(isMacOS: isMacOS ?? Platform.isMacOS);
 
   @override
   String toString() {
     final os = cause.osError?.message;
     final detail = (os == null || os.isEmpty) ? cause.message : os;
-    // errno 1 = EPERM: the app sandbox blocked the read. The entitlements
-    // cover only files physically under ~/.ssh, so this also fires for a
-    // ~/.ssh entry that is a symlink elsewhere (the sandbox checks the
-    // resolved path) — the wording below has to fit that case too.
-    final sandboxHint = isMacOS && cause.osError?.errorCode == 1
+    // errno 1 = EPERM. Only worth blaming the sandbox when there is one:
+    // Séance ships unsandboxed on macOS, so this is normally ordinary
+    // filesystem permissions and the advice below would be a wild goose
+    // chase. Inside a sandbox the entitlement covered only files physically
+    // under ~/.ssh, so it also fired for a ~/.ssh entry that was a symlink
+    // elsewhere (the resolved path is what was checked) — which is why the
+    // wording has to fit that case too.
+    final sandboxHint = isMacOS && isSandboxed && cause.osError?.errorCode == 1
         ? ' The macOS sandbox lets Séance read keys only from ~/.ssh or '
             'files granted via Browse… — store the key in ~/.ssh as a real '
             'file (a symlink to another folder won\'t open), re-pick it with '
@@ -63,6 +77,15 @@ class AppServices {
   final IdentityFileBookmarks identityBookmarks;
   final IdentityAuditLog identityAudit;
   final LocalShellService localShell;
+
+  /// What the one-time move out of a macOS sandbox container did at startup.
+  /// [SandboxMigrationOutcome.failed] is surfaced to the user; everything else
+  /// is silent, because a migration that worked is not news.
+  final SandboxMigrationOutcome sandboxMigration;
+
+  /// Why the migration failed, when it did.
+  final Object? sandboxMigrationError;
+
   List<int> vaultKey;
   AppSettings settings;
 
@@ -81,6 +104,8 @@ class AppServices {
     required this.identityBookmarks,
     required this.identityAudit,
     required this.localShell,
+    required this.sandboxMigration,
+    required this.sandboxMigrationError,
     required this.vaultKey,
     required this.settings,
   });
@@ -89,12 +114,26 @@ class AppServices {
     final dir = await getApplicationSupportDirectory();
     String p(String name) => '${dir.path}/$name';
 
+    // Before anything reads or creates a store: an install made by a
+    // sandboxed build keeps its data inside a container this build no longer
+    // looks in. Running first means the stores below open the migrated files
+    // rather than creating empty ones beside them.
+    final migration = SandboxMigration.forSupportDirectory(dir);
+    final migrationOutcome =
+        await migration?.run() ?? SandboxMigrationOutcome.noLegacyData;
+
+    final vaultFile = File(p('vault.json'));
     final masterKeys = MasterKeyManager();
-    final vaultKey = await masterKeys.loadOrCreateFromKeystore();
+    // A vault on disk means this is not a first run, so a keystore with no key
+    // is a keystore that would not give it up — not permission to mint a new
+    // one over the top of secrets it can no longer decrypt.
+    final vaultKey = await masterKeys.loadOrCreateFromKeystore(
+      hasExistingVault: await _holdsSecrets(vaultFile),
+    );
 
     final configStore = FileConfigStore(File(p('servers.json')));
     final snippetStore = FileSnippetStore(File(p('snippets.json')));
-    final vaultStore = FileVaultStore(File(p('vault.json')));
+    final vaultStore = FileVaultStore(vaultFile);
     final hostKeyStore = FileHostKeyStore(File(p('known_hosts.json')));
     final settingsStore = SettingsStore(File(p('settings.json')));
     final commandStatsStore = CommandStatsStore(File(p('command_stats.json')));
@@ -131,9 +170,24 @@ class AppServices {
       identityBookmarks: IdentityFileBookmarks(),
       identityAudit: IdentityAuditLog(File(p('identity_reads.jsonl'))),
       localShell: LocalShellService(),
+      sandboxMigration: migrationOutcome,
+      sandboxMigrationError: migration?.error,
       vaultKey: vaultKey,
       settings: settings,
     );
+  }
+
+  /// Whether [file] is a vault that actually holds something. An absent or
+  /// empty vault is a first run; an unreadable one is treated as holding
+  /// secrets, because the safe reading of "cannot tell" is "do not overwrite".
+  static Future<bool> _holdsSecrets(File file) async {
+    if (!await file.exists()) return false;
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      return decoded is Map && decoded.isNotEmpty;
+    } catch (_) {
+      return true;
+    }
   }
 
   /// True when the settings file could not be parsed at startup and was moved

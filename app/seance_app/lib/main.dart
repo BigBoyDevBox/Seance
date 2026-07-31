@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app_state.dart';
 import 'services/app_services.dart';
+import 'services/sandbox_migration.dart';
 import 'theme.dart';
 import 'ui/adaptive_shell.dart';
 import 'ui/app_menus.dart';
@@ -110,6 +111,7 @@ class _BootstrapState extends State<_Bootstrap> with WidgetsBindingObserver {
     await state.load();
     _installMacMenu(state);
     _warnIfSettingsWereRecovered(state);
+    _warnIfSandboxMigrationFailed(state);
     // Fire-and-forget: don't let a slow/offline update check hold up startup.
     unawaited(_checkForUpdate(state));
     return state;
@@ -130,6 +132,32 @@ class _BootstrapState extends State<_Bootstrap> with WidgetsBindingObserver {
             'one is kept as settings.json.corrupt — check Settings before '
             'syncing.',
         duration: const Duration(seconds: 10),
+      );
+    });
+  }
+
+  /// Tell the user their data is still behind a macOS sandbox container that
+  /// could not be copied out.
+  ///
+  /// Only the failure is worth saying: a migration that worked is supposed to
+  /// be invisible, and saying so would mean explaining a container the user
+  /// never knew they had. A failure has to be said, because the app looks like
+  /// a fresh install until it is fixed — and nothing has been lost, which is
+  /// the part that stops it being alarming.
+  void _warnIfSandboxMigrationFailed(AppState state) {
+    if (state.services.sandboxMigration != SandboxMigrationOutcome.failed) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = navigatorKey.currentContext;
+      if (context == null) return;
+      showTopToast(
+        Overlay.of(context, rootOverlay: true),
+        message:
+            'Your servers and settings are still inside the old macOS app '
+            'container and could not be copied out, so Séance started empty. '
+            'Nothing was deleted — quit and reopen to try again.',
+        duration: const Duration(seconds: 12),
       );
     });
   }

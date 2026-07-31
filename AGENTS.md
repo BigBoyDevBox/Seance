@@ -129,6 +129,15 @@ Everything security- or correctness-critical is covered by tests that run in CI
 - The assistant treats terminal scrollback as untrusted (prompt-injection),
   gets no execution/file tools, and every suggested command passes a
   review-before-run gate and an independent danger linter.
+- **macOS is deliberately not sandboxed.** The App Sandbox is inherited by
+  child processes, so with it on the local shell opens confined to Séance's
+  container with no job control — not a terminal. Séance ships ad-hoc signed
+  outside the Mac App Store, so nothing requires the sandbox. The cost is
+  real and permanent: a compromise of the app or any dependency reaches
+  everything the user can, not one container. Putting
+  `com.apple.security.app-sandbox` back is one line in
+  `macos/Runner/*.entitlements`; `SandboxMigration` handles installs whose
+  data is still behind a container either way.
 
 See [PROPOSAL.md §7](PROPOSAL.md) for the full checklist and open questions.
 
@@ -265,7 +274,20 @@ compiles the app for android/linux/macos/ios/windows on their native runners
 
 ## 4. How things were verified (so you can re-verify)
 
-- 216 Dart tests + 250 Flutter tests, all analyze clean.
+- 221 Dart tests + 271 Flutter tests, all analyze clean.
+- The sandbox-container migration is tested against **real temp directories**
+  (`test/sandbox_migration_test.dart`) — the thing under test is filesystem
+  behaviour, and a fake would prove nothing about the case that matters: an
+  interrupted copy that leaves an install looking migrated when it is not.
+  What is **not** covered anywhere is the macOS half of the story — no Mac ran
+  any of this. Before releasing an unsandboxed build, verify by hand on a Mac
+  with an existing sandboxed install: data appears after the first launch
+  (servers, snippets, sync still enrolled, **same `deviceId`**); the keychain
+  prompt appears once and "Always Allow" sticks; denying it fails to launch
+  with the `MasterKeyUnavailableException` message rather than starting with an
+  empty vault; a Browse…-picked identity file outside `~/.ssh` still connects;
+  and the local shell opens in the real `$HOME` with `^C` interrupting a
+  `sleep 30`.
 - The local shell's *wiring* is covered by fakes; the pty itself cannot be in
   CI (no native library under `flutter test`). To re-verify it for real on
   Linux, build the plugin's unity target and run a throwaway test against it:
@@ -368,6 +390,19 @@ Do not "simplify" these away — they are load-bearing:
 - `TerminalEngine` (`seance_core`) — bytes in (`feed`), user input stream out,
   `resize`. xterm backend in the app (`XtermTerminalEngine`); libghostty is the
   intended future backend (proposal M10). `HeadlessTerminalEngine` is for tests.
+- `MasterKeyManager.loadOrCreateFromKeystore` — takes `hasExistingVault`,
+  and that argument is load-bearing. A keystore reporting no key reads
+  identically for a first run and for a read the OS refused; minting a fresh
+  key in the second case makes every stored password and private key
+  permanently undecryptable. The vault on disk is the tiebreaker. On macOS the
+  realistic trigger is the login-keychain prompt being dismissed — ad-hoc
+  signing binds the ACL to an exact code hash, so **every rebuild you install
+  asks again**.
+- `SandboxMigration` — copies an install's data out of the macOS App Sandbox
+  container that older builds used. Staged then moved, so an interrupted run
+  leaves the destination empty rather than half-populated (a partial copy that
+  read as "already migrated" would strand the rest forever), and the container
+  is copied, never moved.
 - `SessionTransport` (`seance_core`) — what carries a session's bytes:
   `SshSession` (dartssh2) or `LocalShellSession` (a local pty). Four members —
   `resize`, `close`, `isClosed`, `onClosed` — and `close()` **owns disposing
