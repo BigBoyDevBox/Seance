@@ -21,7 +21,7 @@ shell; macOS ships unsandboxed._
 | Platform | Offered | Why |
 |---|---|---|
 | Linux | yes | Verified end to end against a real pty: echo, `stty size` before/after resize, `^C`, exit status, teardown. |
-| macOS | yes | The App Sandbox is **off** (`macos/Runner/*.entitlements`), so the shell reaches the real `$HOME` and keeps job control. With it on the child inherits it: container-only `$HOME`, unreadable files, `can't set tty pgrp`. The warning path is kept and still fires if the entitlement is ever put back. Existing installs are migrated out of the old container on first launch (`SandboxMigration`) — see the section below. |
+| macOS | yes, unverified on a Mac | The App Sandbox is **off** (`macos/Runner/*.entitlements`), so the shell reaches the real `$HOME` and keeps job control. With it on the child inherits it: container-only `$HOME`, unreadable files, `can't set tty pgrp`. The warning path is kept and still fires if the entitlement is ever put back. Existing installs are migrated out of the old container on first launch (`SandboxMigration`) — see the section below. |
 | Windows | no | `flutter_pty` 0.4.2 builds a malformed command line there (see AGENTS.md §5). Vendoring the package fixes it in ~6 lines; until then the setting says so rather than shipping a broken shell. |
 | Android | no | Only toybox's `/system/bin/sh` inside the app's own sandbox, with no way to install tools. |
 | iOS/iPadOS | never | iOS apps may not spawn child processes at all. |

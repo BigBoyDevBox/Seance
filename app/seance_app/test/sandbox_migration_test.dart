@@ -111,6 +111,19 @@ void main() {
       }
     });
 
+    test('a destination that does not exist yet is created by the rename',
+        () async {
+      // path_provider documents that it creates the support directory, so this
+      // should not arise — but if it ever did, listing a missing directory
+      // would throw and turn a perfectly migratable install into a refused
+      // launch. The parent is what the rename actually needs.
+      await support.delete();
+      writeLegacy('settings.json', '{"deviceId":"abc"}');
+
+      expect(await migration().run(), SandboxMigrationOutcome.migrated);
+      expect(jsonDecode(readSupport('settings.json'))['deviceId'], 'abc');
+    });
+
     test('a stray dot-file does not block it, and is not destroyed', () async {
       // Someone opened ~/Library/Application Support in Finder. That must
       // neither read as "this install is in use" nor cost them the file.

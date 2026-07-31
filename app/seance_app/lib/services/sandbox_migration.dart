@@ -158,14 +158,29 @@ class SandboxMigration {
       // entries mid-stream can silently skip others: with two dot-files, one
       // could be left behind, the rename below would fail ENOTEMPTY, and a
       // migration that was about to succeed would instead refuse to launch.
-      final strays = await support.list(followLinks: false).toList();
-      for (final entry in strays) {
-        final name = entry.path.split(Platform.pathSeparator).last;
-        await entry.rename('${staging.path}${Platform.pathSeparator}$name');
+      //
+      // Guarded on existence because listing a directory that is not there
+      // throws. `getApplicationSupportDirectory` documents that it creates the
+      // directory, so this should be unreachable — but the cost of being wrong
+      // is that nobody can start the app, and the cost of the guard is a line.
+      // The rename below handles a missing destination on its own: its parent
+      // exists, because staging was created in it.
+      if (await support.exists()) {
+        final strays = await support.list(followLinks: false).toList();
+        for (final entry in strays) {
+          final name = entry.path.split(Platform.pathSeparator).last;
+          await entry.rename('${staging.path}${Platform.pathSeparator}$name');
+        }
       }
       // The one step that changes what the app can see. POSIX `rename` over an
       // empty directory is atomic, so there is no moment at which the support
       // directory holds half an install.
+      //
+      // Something appearing in the destination between that listing and this
+      // line — Finder writing a .DS_Store as the user watches the folder —
+      // fails it with ENOTEMPTY. That is caught below and reported as a
+      // failure, and the next launch treats the newcomer as one more stray and
+      // carries it across, so the race costs a relaunch rather than the data.
       await staging.rename(support.path);
       return SandboxMigrationOutcome.migrated;
     } catch (error, stackTrace) {
