@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:seance_core/seance_core.dart';
@@ -460,8 +461,13 @@ class AppState extends ChangeNotifier {
   /// Server-list group sections currently folded away, keyed by
   /// [serverGroupKey]. Read straight off settings rather than mirrored here:
   /// there is one owner of the value, and it is the thing that persists it.
+  ///
+  /// A view rather than a copy — `Set.unmodifiable` would duplicate the
+  /// elements on every read, and the list pane reads this on every build. The
+  /// wrapper is what says [toggleServerGroup] is the only writer: folding a
+  /// section by mutating this set would skip both the repaint and the save.
   Set<String> get collapsedServerGroups =>
-      services.settings.collapsedServerGroups;
+      UnmodifiableSetView(services.settings.collapsedServerGroups);
 
   /// Fold a group section away, or open it again.
   Future<void> toggleServerGroup(String key) async {

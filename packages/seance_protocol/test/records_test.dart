@@ -111,6 +111,28 @@ void main() {
       expect(cleared.icon, isNull);
     });
 
+    test('copyWith normalizes a group the same way fromJson does', () {
+      final base = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      // Otherwise the same name reaching the model by two routes could file
+      // two servers into two near-identical sections.
+      expect(base.copyWith(group: '  Production  ').group, 'Production');
+      expect(base.copyWith(group: '   ').group, isNull);
+      expect(
+        base.copyWith(group: '  Production  ').toJson()['group'],
+        ServerConfig.fromJson({
+          ...base.toJson(),
+          'group': '  Production  ',
+        }).toJson()['group'],
+      );
+    });
+
     test('Secret does not leak its value in toString', () {
       final s = Secret(id: 's1', kind: SecretKind.password, value: 'hunter2');
       expect(s.toString(), isNot(contains('hunter2')));

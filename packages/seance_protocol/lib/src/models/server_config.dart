@@ -191,7 +191,10 @@ class ServerConfig {
           : (identityFilePath ?? this.identityFilePath),
       jumpHostId: clearJumpHostId ? null : (jumpHostId ?? this.jumpHostId),
       syncSecret: syncSecret ?? this.syncSecret,
-      group: clearGroup ? null : (group ?? this.group),
+      // Normalized here as well as in fromJson, so the two ways a group name
+      // can be replaced agree. The const constructor cannot do the same, which
+      // is why every caller-facing path — the editor, this — normalizes.
+      group: clearGroup ? null : normalizeServerGroup(group ?? this.group),
       color: clearColor ? null : (color ?? this.color),
       icon: clearIcon ? null : (icon ?? this.icon),
       createdAt: createdAt,

@@ -224,7 +224,7 @@ class _ServerListPaneState extends State<ServerListPane> {
           :final count,
           :final collapsed,
         ) =>
-          _GroupHeader(
+          ServerGroupHeader(
             name: name,
             count: count,
             collapsed: collapsed,
@@ -568,13 +568,18 @@ class _ServerTile extends StatelessWidget {
 ///
 /// Only ever built when at least one server carries a group: a list with none
 /// renders exactly as it always did, with no headers to look past.
-class _GroupHeader extends StatelessWidget {
+///
+/// Public, unlike the tile beside it, so its semantics can be asserted in a
+/// widget test — it is the app's only collapsible surface, and what a screen
+/// reader makes of a chevron and a bare number is not something to assume.
+class ServerGroupHeader extends StatelessWidget {
   final String name;
   final int count;
   final bool collapsed;
   final VoidCallback onToggle;
 
-  const _GroupHeader({
+  const ServerGroupHeader({
+    super.key,
     required this.name,
     required this.count,
     required this.collapsed,
@@ -589,39 +594,51 @@ class _GroupHeader extends StatelessWidget {
       color: scheme.surfaceContainerHigh,
       // The chevron is the only thing that says which way this row goes, and
       // it is pure decoration to a screen reader — so the state is declared.
-      child: Semantics(
-        expanded: !collapsed,
-        child: InkWell(
-          onTap: onToggle,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
-            child: Row(
-              children: [
-                Icon(
-                  collapsed ? Icons.chevron_right : Icons.expand_more,
-                  size: 20,
-                  color: scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelLarge?.copyWith(
+      // Merged into one node so the row is announced as a single control
+      // ("Production, 3 servers, expanded") rather than as a name, a stray
+      // number, and a button that appear unrelated. The annotation sits
+      // *inside* the merge boundary on purpose: outside it, the fold state
+      // lands on a node above the one carrying the label and the tap, and is
+      // announced as a property of something the label doesn't name.
+      child: MergeSemantics(
+        child: Semantics(
+          expanded: !collapsed,
+          child: InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+              child: Row(
+                children: [
+                  Icon(
+                    collapsed ? Icons.chevron_right : Icons.expand_more,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  // A collapsed group still says how much it is hiding, so
+                  // folding one away never looks like losing servers. Spelled
+                  // out for a screen reader, where a bare "3" between a name
+                  // and a button says nothing about what there are three of.
+                  Text(
+                    '$count',
+                    semanticsLabel:
+                        '$count ${count == 1 ? 'server' : 'servers'}',
+                    style: theme.textTheme.labelSmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
-                ),
-                // A collapsed group still says how much it is hiding, so
-                // folding one away never looks like losing servers.
-                Text(
-                  '$count',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
