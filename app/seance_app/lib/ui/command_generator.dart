@@ -12,9 +12,7 @@ import 'top_toast.dart';
 Future<void> showCommandGenerator(BuildContext context, AppState state) {
   final active = state.activeSession;
   if (active == null || !active.isConnected) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Open a connected session first.')),
-    );
+    showTopToastIn(context, message: 'Open a connected session first.');
     return Future.value();
   }
   return showDialog<void>(
