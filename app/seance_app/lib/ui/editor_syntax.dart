@@ -523,6 +523,12 @@ List<SyntaxToken> _mergeMetaTokens(
     var start = match.start;
     var end = match.end;
     if (group != null) {
+      // Dart's Match API exposes no per-group offsets (start/end are whole-
+      // match getters), so the group is located by search. That is exact as
+      // long as a metaPattern's group cannot also occur inside its own
+      // prefix — true for the YAML key pattern, whose group starts with
+      // [^\s#-] while the prefix is only whitespace and dashes. Keep that
+      // property when adding grouped patterns.
       start = match.start + match[0]!.indexOf(match[group]!);
       end = start + match[group]!.length;
     }

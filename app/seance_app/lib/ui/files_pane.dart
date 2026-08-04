@@ -581,6 +581,8 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
     bool notifySuccess = true,
   }) async {
     copy = widget.controller.localCopies[copy.remotePath] ?? copy;
+    // No setState: _uploadingCopyIds is only read as a guard inside
+    // _queueDirtyEditPrompt, which runs on controller-driven rebuilds.
     _uploadingCopyIds.add(copy.id);
     try {
       await widget.controller.uploadLocalCopy(copy);

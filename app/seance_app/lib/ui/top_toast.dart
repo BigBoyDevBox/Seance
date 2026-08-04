@@ -40,14 +40,17 @@ void showTopToastIn(
   Duration duration = const Duration(seconds: 4),
   String? actionLabel,
   VoidCallback? onAction,
-}) => showTopToast(
-  Overlay.of(context, rootOverlay: true),
-  message: message,
-  background: background,
-  duration: duration,
-  actionLabel: actionLabel,
-  onAction: onAction,
-);
+}) {
+  if (!context.mounted) return;
+  showTopToast(
+    Overlay.of(context, rootOverlay: true),
+    message: message,
+    background: background,
+    duration: duration,
+    actionLabel: actionLabel,
+    onAction: onAction,
+  );
+}
 
 class _ToastData {
   final String message;
@@ -80,8 +83,11 @@ class _ToastStack {
   _ToastStack(this.overlay);
 
   void add(_ToastData toast) {
+    // A toast for a dying overlay would never display; don't retain it (its
+    // onAction closure can hold onto real state).
+    if (!overlay.mounted) return;
     toasts.add(toast);
-    if (overlay.mounted && _entry == null) {
+    if (_entry == null) {
       final entry = OverlayEntry(
         builder: (context) => _ToastColumn(
           toasts: List.of(toasts),

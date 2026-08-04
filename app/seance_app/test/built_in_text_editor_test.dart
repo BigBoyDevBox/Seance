@@ -174,6 +174,36 @@ void main() {
     expect(find.byType(AlertDialog), findsNothing);
   });
 
+  testWidgets('Cmd-S (meta) is the same save-and-upload as Ctrl-S',
+      (tester) async {
+    var uploads = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BuiltInTextEditorScreen(
+          file: file,
+          remotePath: '/etc/config.txt',
+          initialText: 'one\n',
+          saveDocument: (_, text) async {},
+          onUpload: () async {
+            uploads++;
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'edited\n');
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    expect(uploads, 1);
+    expect(find.text('Saved and uploaded.'), findsOneWidget);
+  });
+
   testWidgets('Ctrl-S falls back to reconciling when the upload fails',
       (tester) async {
     var saved = 0;
