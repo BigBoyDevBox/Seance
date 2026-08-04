@@ -241,10 +241,14 @@ class _TopToastState extends State<_TopToast>
                             ),
                             onPressed: () {
                               // The card stays tappable through the fade;
-                              // don't let a second tap re-fire the action.
+                              // don't let a second tap re-fire the action,
+                              // and dismiss even if the action throws.
                               if (_dismissing) return;
-                              toast.onAction?.call();
-                              _dismiss();
+                              try {
+                                toast.onAction?.call();
+                              } finally {
+                                _dismiss();
+                              }
                             },
                             child: Text(toast.actionLabel!),
                           ),

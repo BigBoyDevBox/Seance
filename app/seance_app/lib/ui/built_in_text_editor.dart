@@ -371,13 +371,13 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
         ? (delta > 0 ? 0 : _matches.length - 1)
         : (_activeMatch + delta + _matches.length) % _matches.length;
     _text.setSearchMatches(_matches, _activeMatch);
-    // Park the caret on the match so editing or Escape resumes there.
+    // Park the caret on the match so editing or Escape resumes there. Both
+    // controller mutations notify, and _changed rebuilds — no setState here.
     final match = _matches[_activeMatch];
     _text.selection = TextSelection(
       baseOffset: match.start,
       extentOffset: match.end,
     );
-    setState(() {});
     _revealActiveMatch();
   }
 
@@ -400,13 +400,19 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
     double dy;
     if (text.length <= syntaxHighlightingMaxChars && width != null) {
       final textWidth = width - 2 * _editorPadding;
+      // Only the text before the match determines its vertical position, so
+      // lay out just that prefix: a full-document layout on every search
+      // keystroke would jank on files approaching the highlighting cap. (A
+      // soft wrap mid-word at the boundary can be off by one line — fine
+      // for positioning the viewport.)
+      final prefix = text.substring(0, match.start);
       final painter = TextPainter(
-        text: TextSpan(text: text, style: _editorTextStyle),
+        text: TextSpan(text: prefix, style: _editorTextStyle),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
       )..layout(maxWidth: textWidth > 1 ? textWidth : 1);
       dy = painter.getOffsetForCaret(
-        TextPosition(offset: match.start),
+        TextPosition(offset: prefix.length),
         Rect.zero,
       ).dy;
       painter.dispose();
@@ -510,10 +516,16 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Theme.of registers the dependency, so brightness flips land here.
+    _text.theme = EditorSyntaxTheme.of(Theme.of(context).brightness);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final name = remoteBasename(widget.remotePath);
     final uploadOnSave = widget.onUpload != null;
-    _text.theme = EditorSyntaxTheme.of(Theme.of(context).brightness);
     return PopScope(
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) async {
