@@ -205,6 +205,9 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
   String? _lastQuery;
   double? _editorWidth;
 
+  /// Inset around the document text; also part of the scroll-to-match math.
+  static const double _editorPadding = 14;
+
   /// Matches the terminal's monospace stack; a bare 'monospace' family does
   /// not resolve on every platform (notably macOS/iOS).
   static final TextStyle _editorTextStyle = TextStyle(
@@ -396,11 +399,12 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
     final width = _editorWidth;
     double dy;
     if (text.length <= syntaxHighlightingMaxChars && width != null) {
+      final textWidth = width - 2 * _editorPadding;
       final painter = TextPainter(
         text: TextSpan(text: text, style: _editorTextStyle),
         textDirection: TextDirection.ltr,
         textScaler: MediaQuery.textScalerOf(context),
-      )..layout(maxWidth: width > 29 ? width - 28 : 1);
+      )..layout(maxWidth: textWidth > 1 ? textWidth : 1);
       dy = painter.getOffsetForCaret(
         TextPosition(offset: match.start),
         Rect.zero,
@@ -416,6 +420,7 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
       ).scale(_editorTextStyle.fontSize!);
       dy = line * fontSize * _editorTextStyle.height!;
     }
+    dy += _editorPadding; // The text sits below the field's top content inset.
     final position = _scroll.position;
     final target = (dy - position.viewportDimension / 3).clamp(
       0.0,
@@ -475,9 +480,13 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
       var uploaded = false;
       if (uploadAfterSave) {
         // Upload immediately, no confirmation. The upload reconciles this
-        // copy itself; onSaved only needs to run when the upload didn't.
-        uploaded = await widget.onUpload!();
-        if (!uploaded) await widget.onSaved?.call();
+        // copy itself; onSaved only needs to run when the upload didn't —
+        // including when it throws, hence the finally.
+        try {
+          uploaded = await widget.onUpload!();
+        } finally {
+          if (!uploaded) await widget.onSaved?.call();
+        }
       } else {
         await widget.onSaved?.call();
       }
@@ -733,7 +742,7 @@ class _BuiltInTextEditorScreenState extends State<BuiltInTextEditorScreen> {
           style: _editorTextStyle,
           decoration: const InputDecoration(
             border: InputBorder.none,
-            contentPadding: EdgeInsets.all(14),
+            contentPadding: EdgeInsets.all(_editorPadding),
           ),
         );
       },

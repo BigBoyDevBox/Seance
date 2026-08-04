@@ -27,7 +27,7 @@ void main() {
     expect(find.text('Inserted: ls -la'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 4)); // past the duration
-    await tester.pump(); // process removal
+    await tester.pumpAndSettle(); // fade out and process removal
     expect(find.text('Inserted: ls -la'), findsNothing);
   });
 
@@ -72,12 +72,13 @@ void main() {
 
     await tester.tap(find.text('Upload'));
     await tester.pump();
-    expect(uploaded, 1);
+    expect(uploaded, 1); // The action fires immediately, before the fade.
+    await tester.pumpAndSettle(); // fade out
     expect(find.text('second'), findsNothing);
     expect(find.text('first'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 7));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('first'), findsNothing);
   });
 }

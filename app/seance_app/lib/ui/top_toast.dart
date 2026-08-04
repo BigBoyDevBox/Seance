@@ -165,11 +165,25 @@ class _TopToastState extends State<_TopToast>
   // Owned by the widget state so tree teardown cancels it; a bare
   // Future.delayed would trip widget tests over a pending timer.
   Timer? _dismissTimer;
+  bool _dismissing = false;
 
   @override
   void initState() {
     super.initState();
-    _dismissTimer = Timer(widget.toast.duration, widget.onDismiss);
+    _dismissTimer = Timer(widget.toast.duration, _dismiss);
+  }
+
+  /// Fade the card back out before removing it — the entrance animates, and
+  /// a toast vanishing instantly from under a tap reads as a glitch.
+  void _dismiss() {
+    if (_dismissing) return;
+    _dismissing = true;
+    _dismissTimer?.cancel();
+    _anim.reverse().whenCompleteOrCancel(() {
+      // Skip the removal when the tree is already tearing down (the cancel
+      // path); the stack dies with its overlay.
+      if (mounted) widget.onDismiss();
+    });
   }
 
   @override
@@ -203,7 +217,7 @@ class _TopToastState extends State<_TopToast>
               borderRadius: BorderRadius.circular(8),
               child: InkWell(
                 borderRadius: BorderRadius.circular(8),
-                onTap: widget.onDismiss,
+                onTap: _dismiss,
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 560),
                   child: Padding(
@@ -226,7 +240,7 @@ class _TopToastState extends State<_TopToast>
                               visualDensity: VisualDensity.compact,
                             ),
                             onPressed: () {
-                              widget.onDismiss();
+                              _dismiss();
                               toast.onAction?.call();
                             },
                             child: Text(toast.actionLabel!),

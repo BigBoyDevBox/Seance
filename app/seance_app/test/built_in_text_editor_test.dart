@@ -230,6 +230,32 @@ void main() {
     expect(find.text('Saved locally; not uploaded.'), findsOneWidget);
   });
 
+  testWidgets('Ctrl-S still reconciles when the upload throws',
+      (tester) async {
+    var saved = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BuiltInTextEditorScreen(
+          file: file,
+          remotePath: '/etc/config.txt',
+          initialText: 'one\n',
+          saveDocument: (_, text) async {},
+          onSaved: () async => saved++,
+          onUpload: () async => throw StateError('connection lost'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'edited\n');
+    await tester.pump();
+    await pressCtrlS(tester);
+    await tester.pumpAndSettle();
+
+    expect(saved, 1);
+    expect(find.textContaining('connection lost'), findsOneWidget);
+  });
+
   testWidgets('Ctrl-S saves locally when there is no upload target',
       (tester) async {
     var saved = 0;
