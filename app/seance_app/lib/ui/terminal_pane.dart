@@ -19,6 +19,7 @@ import 'session_label.dart';
 import 'sidebar_panel.dart';
 import 'terminal_appearance.dart';
 import 'terminal_keyboard_bar.dart';
+import 'top_toast.dart';
 
 /// Touch platforms get the on-screen key row (Tab/Ctrl/arrows) and need the
 /// terminal to reflow above the soft keyboard; desktops use a hardware keyboard.
@@ -1039,9 +1040,7 @@ class _ConnectionLogView extends StatelessWidget {
                   ? null
                   : () {
                       Clipboard.setData(ClipboardData(text: text));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Log copied')),
-                      );
+                      showTopToastIn(context, message: 'Log copied');
                     },
               icon: const Icon(Icons.copy, size: 16),
               label: const Text('Copy'),

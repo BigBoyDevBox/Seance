@@ -5,6 +5,7 @@ import '../app_state.dart';
 import '../main.dart';
 import 'command_generator.dart';
 import 'settings_screen.dart';
+import 'top_toast.dart';
 
 bool _settingsRouteOpen = false;
 
@@ -31,11 +32,7 @@ void openCommandGenerator(AppState state) {
   final ctx = navigatorKey.currentContext;
   if (ctx == null) return;
   if (!state.llmConfigured) {
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      const SnackBar(
-        content: Text('Configure the assistant in Settings first.'),
-      ),
-    );
+    showTopToastIn(ctx, message: 'Configure the assistant in Settings first.');
     return;
   }
   showCommandGenerator(ctx, state);

@@ -6,6 +6,7 @@ import '../main.dart';
 import '../services/external_file_opener.dart';
 import 'sync_enrollment_validation.dart';
 import 'terminal_appearance.dart';
+import 'top_toast.dart';
 
 /// Settings: LLM provider (the assistant is always on — this only picks which
 /// model), the web-search backend, secret redaction, and sync enrolment.
@@ -758,9 +759,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await state.reloadLlmProvider();
     if (mounted) {
       setState(() => _saving = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Saved')));
+      showTopToastIn(context, message: 'Saved');
     }
   }
 
@@ -819,9 +818,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _editEditor(state, picked, adding: true);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      showTopToastIn(context, message: error.toString());
     }
   }
 

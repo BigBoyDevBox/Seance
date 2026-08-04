@@ -13,6 +13,7 @@ import 'server_editor.dart';
 import 'server_filter.dart';
 import 'server_grouping.dart';
 import 'settings_screen.dart';
+import 'top_toast.dart';
 
 /// Left pane / first screen: the configured servers with a reachability dot.
 /// Tapping one opens a terminal (via [onOpen]).
@@ -352,9 +353,7 @@ class _ServerListPaneState extends State<ServerListPane> {
     if (text != null && text.trim().isNotEmpty) {
       final n = await state.importSshConfig(text);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Imported $n host(s)')));
+        showTopToastIn(context, message: 'Imported $n host(s)');
       }
     }
   }

@@ -17,6 +17,7 @@ import '../services/managed_remote_file.dart';
 import '../services/remote_files_controller.dart';
 import '../services/xterm_engine.dart';
 import 'built_in_text_editor.dart';
+import 'top_toast.dart';
 
 class FilesScreen extends StatelessWidget {
   const FilesScreen({super.key});
@@ -106,6 +107,7 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
   final ExternalFileOpener _fileOpener = const ExternalFileOpener();
   final TextEditingController _filter = TextEditingController();
   final Set<String> _promptedDirtyCopies = {};
+  final Set<String> _uploadingCopyIds = {};
 
   @override
   void initState() {
@@ -544,7 +546,8 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
               file: file,
               remotePath: copy.remotePath,
               onSaved: widget.controller.reconcileLocalCopies,
-              onUpload: () => _uploadLocalCopy(copy),
+              // The editor reports "Saved and uploaded" itself.
+              onUpload: () => _uploadLocalCopy(copy, notifySuccess: false),
             ),
           ),
         );
@@ -573,11 +576,19 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
     ];
   }
 
-  Future<bool> _uploadLocalCopy(ManagedRemoteFile copy) async {
+  Future<bool> _uploadLocalCopy(
+    ManagedRemoteFile copy, {
+    bool notifySuccess = true,
+  }) async {
     copy = widget.controller.localCopies[copy.remotePath] ?? copy;
+    // No setState: _uploadingCopyIds is only read as a guard inside
+    // _queueDirtyEditPrompt, which runs on controller-driven rebuilds.
+    _uploadingCopyIds.add(copy.id);
     try {
       await widget.controller.uploadLocalCopy(copy);
-      _showMessage('Uploaded ${remoteBasename(copy.remotePath)}');
+      if (notifySuccess) {
+        _showMessage('Uploaded ${remoteBasename(copy.remotePath)}');
+      }
       return true;
     } on RemoteFileException catch (e) {
       if (e.kind != RemoteFileErrorKind.conflict) {
@@ -596,7 +607,9 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
           copy,
           overwriteRemoteChanges: true,
         );
-        _showMessage('Uploaded ${remoteBasename(copy.remotePath)}');
+        if (notifySuccess) {
+          _showMessage('Uploaded ${remoteBasename(copy.remotePath)}');
+        }
         return true;
       } catch (failure) {
         _showError(failure);
@@ -605,6 +618,8 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
     } catch (e) {
       _showError(e);
       return false;
+    } finally {
+      _uploadingCopyIds.remove(copy.id);
     }
   }
 
@@ -624,26 +639,33 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
     };
     _promptedDirtyCopies.removeWhere((id) => !dirtyIds.contains(id));
     final dirty = controller.localCopies.values.where(
-      (copy) => copy.dirty && !_promptedDirtyCopies.contains(copy.id),
+      (copy) =>
+          copy.dirty &&
+          !_promptedDirtyCopies.contains(copy.id) &&
+          !_uploadingCopyIds.contains(copy.id),
     );
     if (dirty.isEmpty) return;
     final copy = dirty.first;
     _promptedDirtyCopies.add(copy.id);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !controller.localCopies.containsKey(copy.remotePath)) {
+      if (!mounted) return;
+      // Re-check right before showing: a save-and-upload from the built-in
+      // editor may already have uploaded (or be uploading) this copy, and a
+      // stale "Upload it?" prompt would read as a confirmation request.
+      final current = controller.localCopies[copy.remotePath];
+      if (current == null ||
+          !current.dirty ||
+          _uploadingCopyIds.contains(current.id)) {
+        _promptedDirtyCopies.remove(copy.id);
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
+      showTopToastIn(
+        context,
+        message:
             '${remoteBasename(copy.remotePath)} changed locally. Upload it?',
-          ),
-          duration: const Duration(seconds: 12),
-          action: SnackBarAction(
-            label: 'Upload',
-            onPressed: () => unawaited(_uploadLocalCopy(copy)),
-          ),
-        ),
+        duration: const Duration(seconds: 12),
+        actionLabel: 'Upload',
+        onAction: () => unawaited(_uploadLocalCopy(copy)),
       );
     });
   }
@@ -1101,16 +1123,12 @@ class _RemoteBrowserState extends State<_RemoteBrowser> {
 
   void _showError(Object error) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(error.toString())));
+    showTopToastIn(context, message: error.toString());
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showTopToastIn(context, message: message);
   }
 
   static String _safeLocalName(String name) {
@@ -1940,9 +1958,7 @@ class _RecoveredLocalEdits extends StatelessWidget {
       }
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      showTopToastIn(context, message: error.toString());
     }
   }
 

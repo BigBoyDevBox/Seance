@@ -147,12 +147,9 @@ class _SnippetsPaneState extends State<SnippetsPane> {
     Snippet snippet,
   ) async {
     final session = state.activeSession;
-    final messenger = ScaffoldMessenger.of(context);
     final overlay = Overlay.of(context, rootOverlay: true);
     if (session == null || !session.isConnected) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Open a connected session first.')),
-      );
+      showTopToast(overlay, message: 'Open a connected session first.');
       return;
     }
     var text = snippet.body;
@@ -165,7 +162,7 @@ class _SnippetsPaneState extends State<SnippetsPane> {
     try {
       text = PasteSanitizer.sanitize(text);
     } on UnsafePasteException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.reason)));
+      showTopToast(overlay, message: e.reason);
       return;
     }
     session.engine.injectInput(text);
