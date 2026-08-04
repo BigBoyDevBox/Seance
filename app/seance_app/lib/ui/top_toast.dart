@@ -240,8 +240,11 @@ class _TopToastState extends State<_TopToast>
                               visualDensity: VisualDensity.compact,
                             ),
                             onPressed: () {
-                              _dismiss();
+                              // The card stays tappable through the fade;
+                              // don't let a second tap re-fire the action.
+                              if (_dismissing) return;
                               toast.onAction?.call();
+                              _dismiss();
                             },
                             child: Text(toast.actionLabel!),
                           ),

@@ -73,6 +73,11 @@ void main() {
     await tester.tap(find.text('Upload'));
     await tester.pump();
     expect(uploaded, 1); // The action fires immediately, before the fade.
+    // A second tap during the fade-out must not re-fire the action.
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Upload'), warnIfMissed: false);
+    await tester.pump();
+    expect(uploaded, 1);
     await tester.pumpAndSettle(); // fade out
     expect(find.text('second'), findsNothing);
     expect(find.text('first'), findsOneWidget);
