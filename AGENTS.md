@@ -326,6 +326,13 @@ Do not "simplify" these away — they are load-bearing:
 - **xterm 4.0**: `Terminal(maxLines:)`, settable `onOutput`/`onResize`,
   `write(String)`, `buffer.getText()`, `TerminalView(terminal, ...)`. SSH is
   bytes; the engine decodes UTF-8 leniently (`allowMalformed: true`).
+- **window_manager hidden-at-launch (macOS)**: `MainFlutterWindow.order(_:relativeTo:)`
+  calls `hiddenWindowAtLaunch()`, so the window stays invisible until Dart calls
+  `windowManager.show()` — which `WindowStateService.restoreAndTrack()` (run in
+  `main()` before `runApp`) always does, even when restoring fails. Don't remove
+  either side without the other. The Windows runner shows the window on the
+  first frame with `SW_SHOWNORMAL`, which cancels a pre-show maximize — that's
+  why maximize/full-screen restore is deferred past the first frame there.
 
 ---
 
