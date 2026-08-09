@@ -164,7 +164,9 @@ release).
   and all five app clients: Android APK, Linux/macOS/Windows desktop bundles,
   unsigned iOS IPA),
   `scripts/build.sh` (all local targets, staged into `dist/`), `./update.sh`
-  (compose redeploy).
+  (compose redeploy; gates on the published `/healthz` answering and honors
+  per-deployment overrides in `packages/seance_sync_server/.env`, e.g.
+  `SEANCE_PUBLISH_ADDR` for containerized reverse proxies).
 - Flutter platform folders are now committed, carrying the `Séance` app name,
   launcher icons from `media-sources/seance-icon.png`, and the macOS
   entitlements. The -34018 keystore startup failure is fixed by using the

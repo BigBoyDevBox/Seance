@@ -259,7 +259,11 @@ compiles the app for android/linux/macos/ios/windows on their native runners
   the GHCR Docker image, and all five app clients). Runs on macOS (BSD sed),
   like the engine.
 - `./update.sh` — on a deployment host: pull the latest code, then
-  `docker compose up -d --build` the sync server.
+  `docker compose up -d --build` the sync server. Honors per-deployment
+  overrides in `packages/seance_sync_server/.env` (e.g. `SEANCE_PUBLISH_ADDR`
+  when a containerized reverse proxy can't reach the default loopback publish)
+  and fails with container logs when the recreated server doesn't answer
+  `/healthz` within 30 s.
 
 ---
 
