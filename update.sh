@@ -60,11 +60,14 @@ docker image prune -f >/dev/null || true
 # in the app much later. Probe the published /healthz endpoint so a broken
 # deploy fails HERE, with logs, instead.
 echo "==> Waiting for the server to answer…"
-endpoint="$("${compose[@]}" port seance-sync 8787 2>/dev/null | head -n1)"
+# `|| true`: under set -e a non-zero `compose port` (no port published) must
+# fall through to the skip branch below, not kill the script.
+endpoint="$("${compose[@]}" port seance-sync 8787 2>/dev/null | head -n1 || true)"
 # Wildcard binds come back in several shapes depending on the CLI version;
-# normalize them all to a loopback-reachable host:port.
-endpoint="${endpoint/0.0.0.0/127.0.0.1}"
-endpoint="${endpoint/\[::\]/127.0.0.1}"
+# normalize them all to a loopback-reachable host:port. Anchored (`/#`) so a
+# real address that merely contains a wildcard substring is left alone.
+endpoint="${endpoint/#0.0.0.0/127.0.0.1}"
+endpoint="${endpoint/#\[::\]/127.0.0.1}"
 endpoint="${endpoint/#:::/127.0.0.1:}"
 if [[ -z "$endpoint" ]]; then
     echo "    No published port found — skipping the health probe." >&2
