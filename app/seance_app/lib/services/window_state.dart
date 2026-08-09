@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show Offset, Rect;
+import 'dart:ui' show Offset, Rect, Size;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:path_provider/path_provider.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
@@ -12,10 +11,19 @@ import 'package:window_manager/window_manager.dart';
 import 'atomic_file.dart';
 
 /// The desktop main-window geometry carried across launches. [bounds] is the
-/// last user-arranged *normal* frame (never a maximized or full-screen one) in
-/// the desktop's global logical coordinate space — the position doubles as the
-/// monitor choice, so restoring it puts the window back on the display it was
-/// closed on. The flags say how the window was presented on top of that frame.
+/// last user-arranged *normal* frame (never a maximized or full-screen one) —
+/// the position doubles as the monitor choice, so restoring it puts the window
+/// back on the display it was closed on. The flags say how the window was
+/// presented on top of that frame.
+///
+/// Units: the desktop's global logical pixels on macOS and Linux, but
+/// *physical* pixels on Windows. window_manager converts between physical and
+/// logical with one ratio — the monitor the window currently occupies — while
+/// screen_retriever scales each display by its own ratio, so on a mixed-DPI
+/// Windows setup the two "logical" spaces disagree and neither is stable
+/// across a relaunch. Physical pixels are the one space every Windows API
+/// maps into exactly; the file is device-local, so the unit never has to
+/// travel.
 class WindowStateSnapshot {
   final Rect? bounds;
   final bool isMaximized;
@@ -106,11 +114,13 @@ class WindowStateStore {
 }
 
 /// Decide whether a saved frame can be restored onto the currently connected
-/// displays (their visible areas, in the same global logical space). Returns
-/// the frame to restore, or null to fall back to the platform's default
-/// placement — when the monitor the window lived on is gone, or the saved
-/// values are degenerate. "Restorable" means enough of the frame lands on some
-/// display to grab the title bar and drag the window back by hand.
+/// displays (their visible areas, in the same coordinate space as the frame).
+/// Returns the frame to restore, or null to fall back to the platform's
+/// default placement — when the monitor the window lived on is gone, or the
+/// saved values are degenerate. "Restorable" means enough of the frame lands
+/// on some display to grab the title bar and drag the window back by hand —
+/// which is specifically the frame's *top* strip: a frame hanging down from
+/// above every screen shows plenty of window but nothing to drag.
 Rect? resolveWindowBounds(Rect? saved, Iterable<Rect> displayAreas) {
   if (saved == null) return null;
   const minimumWindowSize = 100.0;
@@ -125,7 +135,12 @@ Rect? resolveWindowBounds(Rect? saved, Iterable<Rect> displayAreas) {
   }
   for (final area in displayAreas) {
     final overlap = saved.intersect(area);
-    if (overlap.width >= 100 && overlap.height >= 50) return saved;
+    if (overlap.width < 100 || overlap.height < 50) continue;
+    // The title bar sits at the frame's top edge, so that edge must be on
+    // this display (1px of tolerance for rounding), or the visible chunk is
+    // un-draggable.
+    if (saved.top < area.top - 1) continue;
+    return saved;
   }
   return null;
 }
@@ -196,26 +211,36 @@ class WindowStateService with WindowListener {
         if (fullScreen) await windowManager.setFullScreen(true);
       });
     } else if (Platform.isWindows) {
+      if (bounds != null) {
+        // Stored values are physical pixels, but setBounds multiplies logical
+        // input by the ratio of the monitor the window is *currently* on (the
+        // primary, at this point). Move first so the window — and the ratio —
+        // adopt the target monitor, give the new metrics a moment to reach
+        // Dart, then size with the settled ratio. Sizing in one step with the
+        // primary's ratio would restore a frame saved on a 150% monitor at
+        // two-thirds scale.
+        var ratio = windowManager.getDevicePixelRatio();
+        await windowManager.setBounds(
+          null,
+          position: Offset(bounds.left / ratio, bounds.top / ratio),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        ratio = windowManager.getDevicePixelRatio();
+        await windowManager.setBounds(
+          null,
+          size: Size(bounds.width / ratio, bounds.height / ratio),
+        );
+      }
       // The runner shows the window on the first Flutter frame with
       // SW_SHOWNORMAL, which cancels any earlier maximize (and maximizing a
-      // hidden window would show it early). Geometry applies while hidden;
-      // the presentation flags wait until the runner has shown the window.
-      if (bounds != null) await windowManager.setBounds(bounds);
+      // hidden window would show it early). The plugin reports that Show as a
+      // 'show' event (WM_SHOWWINDOW), so the flags apply then — see
+      // [onWindowEvent] — with a timer as a backstop in case the event is
+      // never delivered.
       if (maximized || fullScreen) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          unawaited(
-            Future<void>.delayed(const Duration(milliseconds: 200), () async {
-              try {
-                if (fullScreen) {
-                  await windowManager.setFullScreen(true);
-                } else {
-                  await windowManager.maximize();
-                }
-              } catch (error) {
-                debugPrint('Deferred window state restore failed: $error');
-              }
-            }),
-          );
+        _pendingWindowsFlags = (maximized: maximized, fullScreen: fullScreen);
+        Timer(const Duration(seconds: 3), () {
+          unawaited(_applyPendingWindowsFlags());
         });
       }
     } else {
@@ -237,15 +262,68 @@ class WindowStateService with WindowListener {
     );
   }
 
-  /// The visible working area of every connected display, for
-  /// [resolveWindowBounds]'s "is the saved frame still reachable" check.
+  /// The visible working area of every connected display, in the same
+  /// coordinate space as the stored bounds ([resolveWindowBounds] needs both
+  /// sides to agree).
   Future<List<Rect>> _displayAreas() async {
     final displays = await ScreenRetriever.instance.getAllDisplays();
-    return [
-      for (final display in displays)
+    return [for (final display in displays) _displayArea(display)];
+  }
+
+  Rect _displayArea(Display display) {
+    final area =
         (display.visiblePosition ?? Offset.zero) &
-            (display.visibleSize ?? display.size),
-    ];
+        (display.visibleSize ?? display.size);
+    if (!Platform.isWindows) return area;
+    // screen_retriever divides each monitor's rect by that monitor's own
+    // scale factor, so mixed-DPI monitors don't share one logical space.
+    // Multiply it back out into the physical coordinates the stored bounds
+    // use (see WindowStateSnapshot).
+    final scale = (display.scaleFactor ?? 1).toDouble();
+    return Rect.fromLTWH(
+      area.left * scale,
+      area.top * scale,
+      area.width * scale,
+      area.height * scale,
+    );
+  }
+
+  /// A frame from window_manager, converted into the stored coordinate space
+  /// (physical pixels on Windows — getBounds divides the physical frame by
+  /// the current monitor's ratio, so multiplying it back is exact).
+  Rect _storedSpaceFrom(Rect windowBounds) {
+    if (!Platform.isWindows) return windowBounds;
+    final ratio = windowManager.getDevicePixelRatio();
+    return Rect.fromLTWH(
+      windowBounds.left * ratio,
+      windowBounds.top * ratio,
+      windowBounds.width * ratio,
+      windowBounds.height * ratio,
+    );
+  }
+
+  /// Windows-only: maximize/full-screen waiting for the runner to show the
+  /// window (see the Windows branch of [_applyAtLaunch]).
+  ({bool maximized, bool fullScreen})? _pendingWindowsFlags;
+
+  Future<void> _applyPendingWindowsFlags() async {
+    final pending = _pendingWindowsFlags;
+    if (pending == null) return;
+    _pendingWindowsFlags = null;
+    try {
+      if (pending.fullScreen) {
+        await windowManager.setFullScreen(true);
+      } else if (pending.maximized) {
+        await windowManager.maximize();
+      }
+    } catch (error) {
+      debugPrint('Deferred window state restore failed: $error');
+    }
+  }
+
+  @override
+  void onWindowEvent(String eventName) {
+    if (eventName == 'show') unawaited(_applyPendingWindowsFlags());
   }
 
   // Geometry events arrive continuously during a drag; the debounce means one
@@ -298,7 +376,9 @@ class WindowStateService with WindowListener {
       // Only a normal frame is worth remembering — maximized/full-screen
       // bounds are derived from the display, and restoring them as the
       // "normal" frame would make un-maximizing a no-op.
-      if (!isFullScreen && !isMaximized) bounds = await windowManager.getBounds();
+      if (!isFullScreen && !isMaximized) {
+        bounds = _storedSpaceFrom(await windowManager.getBounds());
+      }
       _current = WindowStateSnapshot(
         bounds: bounds,
         isMaximized: isMaximized,

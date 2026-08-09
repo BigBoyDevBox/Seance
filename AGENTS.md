@@ -332,7 +332,12 @@ Do not "simplify" these away — they are load-bearing:
   `main()` before `runApp`) always does, even when restoring fails. Don't remove
   either side without the other. The Windows runner shows the window on the
   first frame with `SW_SHOWNORMAL`, which cancels a pre-show maximize — that's
-  why maximize/full-screen restore is deferred past the first frame there.
+  why maximize/full-screen restore waits for the plugin's `show` event
+  (WM_SHOWWINDOW, timer backstop) there. Windows geometry is also stored in
+  *physical* pixels: window_manager scales bounds by the current monitor's
+  ratio while screen_retriever scales each display by its own, so on mixed-DPI
+  setups their "logical" spaces disagree — physical is the one space both map
+  into exactly (`WindowStateSnapshot` doc has the details).
 
 ---
 

@@ -98,6 +98,18 @@ void main() {
       expect(resolveWindowBounds(saved, [laptop]), isNull);
     });
 
+    test('a frame hanging down from above every display is not restorable', () {
+      // A 100pt-tall band of the window is visible, but the title bar is
+      // above the screen — nothing to drag.
+      const saved = Rect.fromLTWH(200, -600, 800, 700);
+      expect(resolveWindowBounds(saved, [laptop]), isNull);
+    });
+
+    test('a frame starting at the display top edge restores', () {
+      const saved = Rect.fromLTWH(200, 0, 800, 700);
+      expect(resolveWindowBounds(saved, [laptop]), saved);
+    });
+
     test('degenerate or non-finite frames fall back to the default', () {
       expect(resolveWindowBounds(null, [laptop]), isNull);
       expect(
