@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show Offset, Rect, Size;
+import 'dart:ui' show Offset, Rect;
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -212,24 +212,33 @@ class WindowStateService with WindowListener {
       });
     } else if (Platform.isWindows) {
       if (bounds != null) {
-        // Stored values are physical pixels, but setBounds multiplies logical
-        // input by the ratio of the monitor the window is *currently* on (the
-        // primary, at this point). Move first so the window — and the ratio —
-        // adopt the target monitor, give the new metrics a moment to reach
-        // Dart, then size with the settled ratio. Sizing in one step with the
-        // primary's ratio would restore a frame saved on a 150% monitor at
-        // two-thirds scale.
-        var ratio = windowManager.getDevicePixelRatio();
+        // Stored values are physical pixels. setBounds sends logical values
+        // together with the very ratio it converted them by, and the plugin
+        // multiplies them straight back — so dividing by whatever
+        // getDevicePixelRatio() returns *right now* lands exact physical
+        // coordinates, whichever monitor's ratio that happens to be. No
+        // waiting for metrics to settle.
+        Rect asLogical(Rect physical) {
+          final ratio = windowManager.getDevicePixelRatio();
+          return Rect.fromLTWH(
+            physical.left / ratio,
+            physical.top / ratio,
+            physical.width / ratio,
+            physical.height / ratio,
+          );
+        }
+
+        // Two passes: crossing onto a different-DPI monitor makes the runner
+        // apply the OS's suggested frame (WM_DPICHANGED — handled
+        // synchronously inside the first call), which rescales the window.
+        // Re-asserting the full frame afterwards sticks exactly and — the
+        // monitor and DPI no longer changing — provokes no further
+        // adjustment.
         await windowManager.setBounds(
           null,
-          position: Offset(bounds.left / ratio, bounds.top / ratio),
+          position: asLogical(bounds).topLeft,
         );
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        ratio = windowManager.getDevicePixelRatio();
-        await windowManager.setBounds(
-          null,
-          size: Size(bounds.width / ratio, bounds.height / ratio),
-        );
+        await windowManager.setBounds(asLogical(bounds));
       }
       // The runner shows the window on the first Flutter frame with
       // SW_SHOWNORMAL, which cancels any earlier maximize (and maximizing a
@@ -255,6 +264,11 @@ class WindowStateService with WindowListener {
         await windowManager.maximize();
       }
     }
+    // A rejected saved frame (its monitor is disconnected) is deliberately
+    // retained, not dropped: every restore re-checks it against the connected
+    // displays, so it can never place the window off-screen — but if that
+    // monitor comes back, the window goes home. The first normal-frame
+    // capture replaces it anyway.
     _current = WindowStateSnapshot(
       bounds: bounds ?? saved?.bounds,
       isMaximized: maximized,
