@@ -28,7 +28,42 @@ publish it more broadly only behind TLS or on a trusted private network.
 
 To update a running deployment (pull the latest code, rebuild the image,
 recreate the container in one step), run `./update.sh` from the repository
-root.
+root. It probes the published `/healthz` after the recreate and fails with the
+container's logs when the server doesn't answer.
+
+### Reverse proxy in a container (Nginx Proxy Manager, Traefik, …)
+
+The default `127.0.0.1:8787` publish is only reachable from processes on the
+host itself — inside a proxy *container*, `127.0.0.1` is that container, so it
+gets connection-refused and serves **502 Bad Gateway**. Publish on the Docker
+bridge gateway instead, which only the host and its containers can reach, and
+point the proxy at that same address:
+
+```bash
+cp packages/seance_sync_server/.env.example packages/seance_sync_server/.env
+echo 'SEANCE_PUBLISH_ADDR=172.17.0.1' >> packages/seance_sync_server/.env
+./update.sh   # or: docker compose --env-file packages/seance_sync_server/.env \
+              #     -f packages/seance_sync_server/docker-compose.yml up -d
+```
+
+The `.env` file is gitignored, so updates keep the setting. Use
+`SEANCE_PUBLISH_ADDR=0.0.0.0` for every interface (firewall it), or attach the
+proxy and this service to a shared Docker network and skip publishing entirely.
+
+### Troubleshooting: the app reports a 502
+
+A 502 is never produced by this server — it comes from whatever sits in front
+(reverse proxy or CDN) when the sync container doesn't answer. On the host:
+
+```bash
+docker compose -f packages/seance_sync_server/docker-compose.yml ps    # running? healthy?
+docker compose -f packages/seance_sync_server/docker-compose.yml logs --tail=40
+curl -i "http://$(docker compose -f packages/seance_sync_server/docker-compose.yml \
+  port seance-sync 8787)/healthz"                                      # expect: ok
+```
+
+If `/healthz` answers on the host but the proxy still serves 502, the proxy is
+pointing somewhere the port isn't published (see the section above).
 
 ## Run without Docker
 

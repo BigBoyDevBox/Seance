@@ -47,11 +47,53 @@ class HttpSyncClient implements SyncApi {
       Uri.parse('$baseUrl$path').replace(queryParameters: query);
 
   Never _fail(http.Response res) {
+    // The server's own errors are JSON with an `error` code. Anything else —
+    // an HTML error page, a CDN's plain-text body, a JSON scalar — came from
+    // whatever sits in front of the server (or from a URL that is not a
+    // Séance server), so describe the failure instead of echoing the body.
+    Object? decoded;
     try {
-      throw ApiError.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
-    } on FormatException {
-      throw ApiError(code: 'http_${res.statusCode}', message: res.body);
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = null;
     }
+    if (decoded is Map<String, dynamic> && decoded['error'] is String) {
+      throw ApiError.fromJson(decoded);
+    }
+    throw ApiError(
+      code: 'http_${res.statusCode}',
+      message: _describeHttpFailure(res.statusCode, res.body),
+    );
+  }
+
+  static String _describeHttpFailure(int status, String body) {
+    switch (status) {
+      case 502:
+        return 'The reverse proxy could not reach the sync server — it looks '
+            'stopped, crashed, or unreachable on its published port.';
+      case 503:
+        return 'The sync server is unavailable — it may be restarting or '
+            'overloaded.';
+      case 504:
+        return 'The reverse proxy timed out waiting for the sync server.';
+      default:
+        final snippet = _sanitizeBody(body);
+        return snippet.isEmpty
+            ? 'Unexpected response with an empty body.'
+            : 'Unexpected response: $snippet';
+    }
+  }
+
+  /// Strip markup and collapse whitespace so a proxy's HTML error page renders
+  /// as one short readable line in the app, not tag soup.
+  static String _sanitizeBody(String body) {
+    var text = body
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    const cap = 160;
+    if (text.length > cap) text = '${text.substring(0, cap)}…';
+    return text;
   }
 
   /// Create an account and receive a session token.
