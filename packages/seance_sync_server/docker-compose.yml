@@ -30,11 +30,14 @@ services:
     volumes:
       - seance-data:/data
     healthcheck:
-      # A real liveness probe against /healthz (the slim image has no curl;
-      # bash's /dev/tcp does the job). The old `seance-sync --help` check only
-      # proved the binary could execute, so a wedged server still showed
-      # "healthy".
-      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/8787 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200' <&3"]
+      # A real liveness probe against /healthz (the slim image has no curl or
+      # wget; bash's /dev/tcp does the job — bash is an essential package in
+      # debian:*-slim, so it is always present; revisit this probe if the
+      # Dockerfile ever moves to alpine/distroless). Matching ' 200 ' on the
+      # status line only, so a body or date header can never false-positive.
+      # The old `seance-sync --help` check only proved the binary could
+      # execute, so a wedged server still showed "healthy".
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/8787 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
       interval: 30s
       timeout: 5s
       retries: 3
