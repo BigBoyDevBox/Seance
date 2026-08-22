@@ -65,10 +65,11 @@ jobs:
         working-directory: app/seance_app
         run: flutter test
 
-  # Compile every client the release workflow ships (android / linux / macos /
-  # ios / windows) so a platform-breaking change is caught here, not when a tag
-  # tries to publish. Mirrors release.yml's `client` job minus the packaging
-  # and publishing — keep the two matrices in step.
+  # Compile every client the release workflow ships (android / linux x64 +
+  # arm64 / macos / ios / windows) and run the Linux packaging step, so a
+  # platform- or packaging-breaking change is caught here, not when a tag
+  # tries to publish. Mirrors release.yml's `client` job minus publishing
+  # — keep the two matrices in step.
   client:
     name: Client build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -83,6 +84,13 @@ jobs:
           - os: ubuntu-latest
             target: linux
             build: linux --release
+            flavor: x64
+          # Arm64 Linux client — same compile+package path as x64, on GitHub's
+          # free-for-public-repos arm runner.
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            build: linux --release
+            flavor: arm64
           - os: macos-latest
             target: macos
             build: macos --release
@@ -102,13 +110,14 @@ jobs:
           distribution: temurin
           java-version: '17'
       # GTK toolchain for the Flutter Linux embedder, plus libsecret/jsoncpp
-      # for flutter_secure_storage's keyring backend.
+      # for flutter_secure_storage's keyring backend. imagemagick/file: the
+      # packaging step resizes the launcher icon and appimagetool needs `file`.
       - name: Install Linux desktop toolchain
-        if: matrix.target == 'linux'
+        if: startsWith(matrix.target, 'linux')
         run: >-
           sudo apt-get update && sudo apt-get install -y
           clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-          libsecret-1-dev libjsoncpp-dev
+          libsecret-1-dev libjsoncpp-dev imagemagick file
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -130,6 +139,18 @@ jobs:
       - name: Build
         working-directory: app/seance_app
         run: flutter build ${{ matrix.build }}
+      # Exercise the same packaging the release workflow ships (keep the two
+      # in step) and expose the artifacts for inspection on every CI run.
+      - name: Package Linux artifacts (.deb + AppImage)
+        if: startsWith(matrix.target, 'linux')
+        run: scripts/package-linux.sh --output-dir dist-packages
+      - name: Upload Linux packages
+        if: startsWith(matrix.target, 'linux')
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.flavor }}-packages
+          path: dist-packages/*
+          if-no-files-found: error
 
   docker:
     name: Sync server Docker image

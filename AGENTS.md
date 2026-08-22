@@ -57,7 +57,8 @@ release (proposal §2, M10).
 Requires the Dart SDK (3.12+) for the pure-Dart packages and the Flutter SDK
 for the app. `scripts/build.sh` builds every target this host can build (the
 native sync-server binary, the Docker image, the Flutter desktop app, and the
-Android APK) and prints one summary; the individual commands:
+Android APK; on Linux it also packages the app into a `.deb` and an AppImage)
+and prints one summary; the individual commands:
 
 ```bash
 # Everything this host can build (missing toolchains are skipped; explicitly
@@ -89,8 +90,10 @@ docker compose -f packages/seance_sync_server/docker-compose.yml up -d --build
 version line at the top of this README in step, commits, and tags `v<version>`
 — pushing that tag triggers `.github/workflows/release.yml`, which tests, then
 publishes the sync-server binaries, the `ghcr.io/l-k-m/seance` Docker image,
-and the app for every client platform — Android APK, Linux/macOS/Windows
-desktop bundles, and an unsigned iOS IPA (re-sign to sideload) — as the
+and the app for every client platform — Android APK, Linux `.deb` + AppImage
+packages for both architectures plus plain desktop bundles (via
+`scripts/package-linux.sh`), macOS/Windows desktop bundles, and an unsigned
+iOS IPA (re-sign to sideload) — as the
 GitHub Release. The desktop bundles are unsigned (macOS: ad-hoc), so first
 launch needs the usual unidentified-developer step; `scripts/build.sh` stays
 the local path for a signed-for-this-Mac build.
@@ -161,10 +164,21 @@ sudo apt-get update && sudo apt-get install -y libsqlite3-0
 
 Facts about this environment:
 - Outbound HTTPS goes through a proxy; pub.dev and the Dart archive are reachable.
+- **No root in the dev container** (no sudo, uid 1000): the apt packages above
+  can't be installed. A conda-forge env substitutes for the whole Linux
+  toolchain — `micromamba create -n build -c conda-forge clang=17 clangxx=17
+  compiler-rt lld sysroot_linux-64 cmake ninja pkg-config gtk3 libsecret
+  jsoncpp xz imagemagick binutils file glib 'libstdcxx-devel_linux-64=12'
+  'libgcc-devel_linux-64=12'`, then export
+  `PKG_CONFIG_PATH="$CONDA_PREFIX/lib/pkgconfig:$CONDA_PREFIX/share/pkgconfig"`
+  (the env's activate scripts don't set it, and `expat` ships no `expat.pc` —
+  write a stub). The gcc-12 downgrade matters: GCC 16's libstdc++ headers drop
+  C++14, which the Flutter Linux template's `cxx_std_14` needs.
+- Even `unzip`/`bzip2` may be missing — a static busybox in `~/opt/bin`\n  provides them (Flutter's bootstrap needs unzip).
 - **Docker CLI is present but the daemon was NOT running** — `docker build`
   could not be exercised here. The Dockerfile is verified only by `dart compile
   exe` + a native-binary curl smoke test (see §4).
-- Flutter runs as root and prints a "don't run as root" warning — harmless.
+- Flutter may run as root and print a "don't run as root" warning — harmless.
 
 ---
 
@@ -247,16 +261,26 @@ compiles the app for android/linux/macos/ios/windows on their native runners
 
 - `scripts/build.sh` — builds every target this host can build (`server`,
   `docker`, `app`, `apk`); skips targets whose toolchain is missing, fails only
-  on targets you name explicitly. Artifacts are staged into `dist/`;
-  `--install` builds the host's app and installs it (macOS:
-  `/Applications/Séance.app`; Linux: `~/.local/opt/seance`), then reveals the
-  installed copy. `--help` prints the contract.
+  on targets you name explicitly. Artifacts are staged into `dist/`; on Linux
+  the `app` target additionally runs `scripts/package-linux.sh` to produce a
+  `.deb` and an AppImage there. `--install` builds the host's app and installs
+  it (macOS: `/Applications/Séance.app`; Linux: `~/.local/opt/seance`), then
+  reveals the installed copy. `--help` prints the contract.
+- `scripts/package-linux.sh` — turns a built Flutter Linux bundle into
+  installable artifacts: `seance_<version>-1_<arch>.deb` (dpkg-deb; Depends
+  derived from the bundle's actual ELF headers via readelf/objdump — a
+  soname→package table with t64 alternatives, glibc/libstdc++ symbol-version
+  floors — so the metadata can't go stale as plugins change) and
+  `seance-linux-<arch>.AppImage` (appimagetool, fetched once and cached).
+  Deliberately no .rpm/Flatpak: non-Debian users get the AppImage. Runs from
+  `scripts/build.sh` (best-effort AppImage) and both CI workflows (required).
 - `scripts/release.sh X.Y.Z [--push]` — stub over the shared
   [release-tool](https://github.com/L-K-M/release-tool) engine (`lkm-release`):
   bumps all four pubspecs in lockstep (+ app lockfile + README version line),
   commits, tags `v<version>`; the pushed tag triggers
   `.github/workflows/release.yml` (tests gate; publishes sync-server binaries,
-  the GHCR Docker image, and all five app clients). Runs on macOS (BSD sed),
+  the GHCR Docker image, and all app clients, now including the Linux
+  .deb + AppImage packages for both architectures). Runs on macOS (BSD sed),
   like the engine.
 - `./update.sh` — on a deployment host: pull the latest code, then
   `docker compose up -d --build` the sync server. Honors per-deployment
@@ -277,6 +301,14 @@ compiles the app for android/linux/macos/ios/windows on their native runners
 - The server was compiled to a native binary and smoke-tested with `curl`:
   register → login (accept correct verifier, reject wrong) → push (assigns seq)
   → pull → unauthenticated 401.
+- The Linux installers were built and smoke-tested end-to-end: `flutter build
+  linux --release` → `scripts/package-linux.sh` produced a `.deb` and an
+  AppImage; `dpkg-deb -I/-c` confirmed the control fields (Depends derived
+  from the bundle's ELF headers) and file layout, `dpkg-deb -x` + running the
+  extracted binary and `APPIMAGE_EXTRACT_AND_RUN=1 ./seance-linux-*.AppImage`
+  both reach GTK's "cannot open display" on a headless host — i.e. every ELF
+  and library path resolves; only the GUI needs a display. (Built in a no-root
+  Debian 12 container using a conda-forge toolchain — see §1.)
 - SQLite backend has its own test (round-trips + durability across reopen).
 
 ---

@@ -3,8 +3,9 @@ name: Release
 # Tag a version (scripts/release.sh X.Y.Z --push) to test, build, and publish
 # Séance's release artifacts: sync-server binaries for each desktop platform, a
 # Docker image on GHCR, and the app client for every platform folder the repo
-# carries — Android APK, Linux/macOS/Windows desktop bundles, and an unsigned
-# iOS IPA. No signing identity is involved beyond the committed Android
+# carries — Android APK, Linux packages (.deb + AppImage, both architectures —
+# the .deb keeps its versioned Debian filename), macOS/Windows desktop bundles,
+# and an unsigned iOS IPA. No signing identity is involved beyond the committed Android
 # keystore: the desktop bundles are unsigned (macOS: ad-hoc), so first launch
 # needs the usual unidentified-developer step (macOS: right-click ▸ Open;
 # Windows: SmartScreen ▸ Run anyway), and the iOS IPA must be re-signed to
@@ -138,27 +139,41 @@ jobs:
           - os: ubuntu-latest
             target: android
             build: apk --release
-            artifact: seance-android.apk
+            files: seance-android.apk
+          # x64 and arm64 (GitHub's free-for-public-repos arm runner) each ship
+          # three assets: the plain bundle, an installable .deb, and an
+          # AppImage. The .deb is named by Debian convention with the version
+          # baked in (seance_<version>-1_<arch>.deb) — hence the glob.
           - os: ubuntu-latest
             target: linux
             build: linux --release
-            artifact: seance-linux-x64.tar.gz
-          # Flutter release builds of the macOS app are universal
-          # (arm64 + x86_64), so one asset covers both Mac generations.
+            flavor: x64
+            files: |
+              seance-linux-x64.tar.gz
+              seance_*.deb
+              seance-linux-x64.AppImage
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            build: linux --release
+            flavor: arm64
+            files: |
+              seance-linux-arm64.tar.gz
+              seance_*.deb
+              seance-linux-arm64.AppImage
           - os: macos-latest
             target: macos
             build: macos --release
-            artifact: seance-macos-universal.zip
+            files: seance-macos-universal.zip
           # No Apple Developer account: built unsigned (--no-codesign) and
           # shipped as an IPA for users who re-sign and sideload.
           - os: macos-latest
             target: ios
             build: ios --release --no-codesign
-            artifact: seance-ios-unsigned.ipa
+            files: seance-ios-unsigned.ipa
           - os: windows-latest
             target: windows
             build: windows --release
-            artifact: seance-windows-x64.zip
+            files: seance-windows-x64.zip
     steps:
       - uses: actions/checkout@v4
       # Match the app's compileOptions (JavaVersion.VERSION_17) so the Gradle
@@ -169,13 +184,14 @@ jobs:
           distribution: temurin
           java-version: '17'
       # GTK toolchain for the Flutter Linux embedder, plus libsecret/jsoncpp
-      # for flutter_secure_storage's keyring backend.
+      # for flutter_secure_storage's keyring backend; imagemagick/file feed
+      # scripts/package-linux.sh (icon resize, appimagetool).
       - name: Install Linux desktop toolchain
-        if: matrix.target == 'linux'
+        if: startsWith(matrix.target, 'linux')
         run: >-
           sudo apt-get update && sudo apt-get install -y
           clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
-          libsecret-1-dev libjsoncpp-dev
+          libsecret-1-dev libjsoncpp-dev imagemagick file
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -201,7 +217,8 @@ jobs:
         run: flutter build ${{ matrix.build }}
       # Stage each platform's product under its release asset name. Names
       # match the sync-server tarballs: product + platform, no version (the
-      # release page already carries the version).
+      # release page already carries the version) — except the .deb, whose
+      # filename is Debian's versioned convention.
       - name: Package
         shell: bash
         run: |
@@ -210,9 +227,11 @@ jobs:
               cp app/seance_app/build/app/outputs/flutter-apk/app-release.apk \
                  seance-android.apk
               ;;
-            linux)
-              mv "$(ls -d app/seance_app/build/linux/*/release/bundle)" seance-linux-x64
-              tar -czf seance-linux-x64.tar.gz seance-linux-x64
+            linux|linux-arm64)
+              mv "$(ls -d app/seance_app/build/linux/*/release/bundle)" \
+                 "seance-linux-${{ matrix.flavor }}"
+              tar -czf "seance-linux-${{ matrix.flavor }}.tar.gz" "seance-linux-${{ matrix.flavor }}"
+              scripts/package-linux.sh --output-dir .
               ;;
             macos)
               # Xcode builds the ASCII "Seance.app" (codesign rejects accented
@@ -241,7 +260,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
-          files: ${{ matrix.artifact }}
+          files: ${{ matrix.files }}
 
   # Container image to GitHub Container Registry. Deployments build from source
   # (./update.sh / docker compose --build); this image is the release artifact
