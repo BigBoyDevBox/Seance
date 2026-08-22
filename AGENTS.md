@@ -91,7 +91,7 @@ version line at the top of this README in step, commits, and tags `v<version>`
 — pushing that tag triggers `.github/workflows/release.yml`, which tests, then
 publishes the sync-server binaries, the `ghcr.io/l-k-m/seance` Docker image,
 and the app for every client platform — Android APK, Linux `.deb` + AppImage
-packages for both architectures plus plain desktop bundles (via
+packages for x64 plus plain desktop bundles (via
 `scripts/package-linux.sh`), macOS/Windows desktop bundles, and an unsigned
 iOS IPA (re-sign to sideload) — as the
 GitHub Release. The desktop bundles are unsigned (macOS: ad-hoc), so first
@@ -280,8 +280,9 @@ compiles the app for android/linux/macos/ios/windows on their native runners
   commits, tags `v<version>`; the pushed tag triggers
   `.github/workflows/release.yml` (tests gate; publishes sync-server binaries,
   the GHCR Docker image, and all app clients, now including the Linux
-  .deb + AppImage packages for both architectures). Runs on macOS (BSD sed),
-  like the engine.
+  .deb + AppImage packages). Runs on macOS (BSD sed),
+  like the engine. (The post-bump hook is sed-portable since 0.7.0, so Linux
+  hosts can cut releases too.)
 - `./update.sh` — on a deployment host: pull the latest code, then
   `docker compose up -d --build` the sync server. Honors per-deployment
   overrides in `packages/seance_sync_server/.env` (e.g. `SEANCE_PUBLISH_ADDR`

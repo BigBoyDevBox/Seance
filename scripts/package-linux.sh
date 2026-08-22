@@ -152,6 +152,14 @@ declare -A SONAME_TO_DEP=(
   [libgcrypt.so.20]='libgcrypt20'
 )
 
+# Sonames that are deliberately NOT Depends entries — known-conditional deps
+# of vendored native assets, loaded lazily and only if the app ever uses the
+# owning package. libjvm.so: needed by libdartjni.so (package:jni's native
+# asset, which enters the graph via path_provider_android but is never used
+# by Séance on Linux) — a JRE in Depends would be absurd for this app. If JNI
+# ever becomes a real dependency, drop the entry and depend on a JRE instead.
+declare -A SONAME_OPTIONAL=([libjvm.so]='package:jni native asset; lazily dlopen-ed, unused by Seance')
+
 UNKNOWN=()
 UNKNOWN_DETAIL=()   # "file → soname" — attribution for the error message
 declare -A DEP_SEEN=()
@@ -179,6 +187,8 @@ for f in "${ELFS[@]}"; do
     [[ -e "$BUNDLE/lib/$soname" ]] && continue
     if [[ -n "${SONAME_TO_DEP[$soname]:-}" ]]; then
       dep_add "${SONAME_TO_DEP[$soname]}"
+    elif [[ -n "${SONAME_OPTIONAL[$soname]:-}" ]]; then
+      continue   # documented non-dependency (see SONAME_OPTIONAL above)
     else
       UNKNOWN+=("$soname")
       UNKNOWN_DETAIL+=("$(basename "$f") → $soname")

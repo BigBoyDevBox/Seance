@@ -3,8 +3,8 @@ name: Release
 # Tag a version (scripts/release.sh X.Y.Z --push) to test, build, and publish
 # Séance's release artifacts: sync-server binaries for each desktop platform, a
 # Docker image on GHCR, and the app client for every platform folder the repo
-# carries — Android APK, Linux packages (.deb + AppImage, both architectures —
-# the .deb keeps its versioned Debian filename), macOS/Windows desktop bundles,
+# carries — Android APK, Linux packages (.deb + AppImage, x64 — Flutter
+# publishes no linux-arm64 host artifacts), macOS/Windows desktop bundles,
 # and an unsigned iOS IPA. No signing identity is involved beyond the committed Android
 # keystore: the desktop bundles are unsigned (macOS: ad-hoc), so first launch
 # needs the usual unidentified-developer step (macOS: right-click ▸ Open;
@@ -140,10 +140,10 @@ jobs:
             target: android
             build: apk --release
             files: seance-android.apk
-          # x64 and arm64 (GitHub's free-for-public-repos arm runner) each ship
-          # three assets: the plain bundle, an installable .deb, and an
-          # AppImage. The .deb is named by Debian convention with the version
-          # baked in (seance_<version>-1_<arch>.deb) — hence the glob.
+          # The .deb and AppImage ride along with the plain bundle (three
+          # assets); the .deb keeps its versioned Debian filename, hence the
+          # glob. x64 only: Flutter publishes no linux-arm64 host artifacts
+          # (releases_linux.json is x64-only), so an arm runner can't build it.
           - os: ubuntu-latest
             target: linux
             build: linux --release
@@ -152,14 +152,6 @@ jobs:
               seance-linux-x64.tar.gz
               seance_*.deb
               seance-linux-x64.AppImage
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
-            build: linux --release
-            flavor: arm64
-            files: |
-              seance-linux-arm64.tar.gz
-              seance_*.deb
-              seance-linux-arm64.AppImage
           - os: macos-latest
             target: macos
             build: macos --release
@@ -227,7 +219,7 @@ jobs:
               cp app/seance_app/build/app/outputs/flutter-apk/app-release.apk \
                  seance-android.apk
               ;;
-            linux|linux-arm64)
+            linux)
               mv "$(ls -d app/seance_app/build/linux/*/release/bundle)" \
                  "seance-linux-${{ matrix.flavor }}"
               tar -czf "seance-linux-${{ matrix.flavor }}.tar.gz" "seance-linux-${{ matrix.flavor }}"
