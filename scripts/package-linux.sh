@@ -145,6 +145,7 @@ declare -A SONAME_TO_DEP=(
   [libharfbuzz.so.0]='libharfbuzz0b'
   [libfontconfig.so.1]='libfontconfig1'
   [libepoxy.so.0]='libepoxy0'
+  [libz.so.1]='zlib1g'
   # flutter_secure_storage' keyring backend
   [libsecret-1.so.0]='libsecret-1-0'
   # libsecret pulls gcrypt via pinentry on some setups; harmless if unused.
@@ -152,6 +153,7 @@ declare -A SONAME_TO_DEP=(
 )
 
 UNKNOWN=()
+UNKNOWN_DETAIL=()   # "file → soname" — attribution for the error message
 declare -A DEP_SEEN=()
 declare -a DEP_STRS=()
 dep_add() {  # $1 = dependency string; may be "pkg | pkg-t64" (contains spaces)
@@ -179,11 +181,12 @@ for f in "${ELFS[@]}"; do
       dep_add "${SONAME_TO_DEP[$soname]}"
     else
       UNKNOWN+=("$soname")
+      UNKNOWN_DETAIL+=("$(basename "$f") → $soname")
     fi
   done < <(readelf -d "$f" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
 done
 if ((${#UNKNOWN[@]})); then
-  die "unmapped soname(s): ${UNKNOWN[*]} — add them to SONAME_TO_DEP in $SELF (check: dpkg -S /usr/lib/*/libX.so.N)"
+  die "unmapped soname(s): ${UNKNOWN[*]} — add them to SONAME_TO_DEP in $SELF (check: dpkg -S /usr/lib/*/libX.so.N). Needed by: ${UNKNOWN_DETAIL[*]}"
 fi
 
 # Version floors from the symbol versions actually referenced — what

@@ -231,7 +231,10 @@ jobs:
               mv "$(ls -d app/seance_app/build/linux/*/release/bundle)" \
                  "seance-linux-${{ matrix.flavor }}"
               tar -czf "seance-linux-${{ matrix.flavor }}.tar.gz" "seance-linux-${{ matrix.flavor }}"
-              scripts/package-linux.sh --output-dir .
+              # The mv above renamed the bundle out of Flutter's layout, so
+              # point the packager at it explicitly (--bundle asks the ELF for
+              # its arch).
+              scripts/package-linux.sh --bundle "seance-linux-${{ matrix.flavor }}" --output-dir .
               ;;
             macos)
               # Xcode builds the ASCII "Seance.app" (codesign rejects accented
