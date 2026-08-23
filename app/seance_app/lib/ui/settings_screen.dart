@@ -752,7 +752,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ref = _kind == LlmProviderKind.anthropic ? 'anthropic' : 'openai';
     s.llmApiKeyRef = ref;
     if (_apiKey.text.isNotEmpty) {
-      await state.services.masterKeys.putApiKey(ref, _apiKey.text);
+      try {
+        await state.services.masterKeys.putApiKey(ref, _apiKey.text);
+      } catch (e) {
+        // KeystoreException: the OS keyring is unavailable — don't report
+        // "Saved" for a key that never landed.
+        if (!mounted) return;
+        setState(() => _saving = false);
+        showTopToastIn(context, message: '$e');
+        return;
+      }
     }
     await state.services.saveSettings();
     // Rebuild the chat provider (new key/model) and refresh sidebar visibility.

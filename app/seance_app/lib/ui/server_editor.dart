@@ -5,6 +5,7 @@ import '../app_state.dart';
 import '../services/app_settings.dart';
 import 'server_appearance.dart';
 import 'server_grouping.dart';
+import 'top_toast.dart';
 
 /// Add or edit a server. Password / private-key material is written to the
 /// encrypted vault; the config stores only a reference.
@@ -429,13 +430,24 @@ class _ServerEditorState extends State<_ServerEditor> {
     final bookmarkMatchesPath = identityFilePath != null &&
         _keyBookmark != null &&
         identityFilePath == _keyBookmarkPath?.trim();
-    await widget.state.saveServer(
-      config,
-      secret: secret,
-      identityFileBookmark: bookmarkMatchesPath
-          ? IdentityFileBookmark(path: identityFilePath, bookmark: _keyBookmark!)
-          : null,
-    );
+    try {
+      // The vault write inside throws (VaultLockedException) when the OS
+      // keyring is unavailable — tell the user instead of wedging the editor
+      // with _busy stuck on.
+      await widget.state.saveServer(
+        config,
+        secret: secret,
+        identityFileBookmark: bookmarkMatchesPath
+            ? IdentityFileBookmark(
+                path: identityFilePath, bookmark: _keyBookmark!)
+            : null,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopToastIn(context, message: 'Could not save: $e');
+      return;
+    }
     if (mounted) Navigator.of(context).pop();
   }
 }

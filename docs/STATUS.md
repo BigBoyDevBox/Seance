@@ -49,6 +49,11 @@ no .rpm/Flatpak — the AppImage covers non-Debian distros; it uses the system G
   hard changed-key block.
 - `app/seance_app/test/bootstrap_test.dart` — startup phases stay in one
   MaterialApp; pushed routes resolve `AppScope`.
+- `app/seance_app/test/keystore_resilience_test.dart` — a locked/missing OS
+  keyring (Ubuntu auto-login, no gnome-keyring) must not kill startup:
+  probes return null, reads degrade to "not set", writes fail with a clear
+  message, the locked vault throws instead of mis-decrypting, and recovery
+  works when the keystore comes back.
 - `seance_core/test/ssh_diagnostics_test.dart` — connection-log capture and the
   readable `SshConnectException` summary; agent-auth rejected pre-network.
 - `seance_core/test/http_sync_client_test.dart` — sync base-URL normalization

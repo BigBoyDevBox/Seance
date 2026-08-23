@@ -44,6 +44,21 @@ class IdentityFileException implements Exception {
   }
 }
 
+/// A vault without its key: the OS keystore was unavailable at bootstrap, so
+/// no key exists this session. Reads and writes fail with a clear message
+/// instead of decrypting with a wrong key (which would look like corruption)
+/// or fabricating an ephemeral one (which would silently orphan anything saved
+/// now on the next launch). Deleting stays legal — it needs no key.
+class LockedSecretVault extends SecretVault {
+  LockedSecretVault(VaultStore store) : super(store, const <int>[]);
+
+  @override
+  Future<Secret?> getSecret(String id) async => throw const VaultLockedException();
+
+  @override
+  Future<void> putSecret(Secret secret) async => throw const VaultLockedException();
+}
+
 /// Wires together the seance_core services with the app's file-backed stores
 /// and the OS keystore. Created once at startup.
 class AppServices {
@@ -61,7 +76,9 @@ class AppServices {
   final ManagedRemoteFileStore managedRemoteFiles;
   final IdentityFileBookmarks identityBookmarks;
   final IdentityAuditLog identityAudit;
-  List<int> vaultKey;
+  /// Null while the vault is locked (keystore unavailable at bootstrap — see
+  /// [LockedSecretVault] and [unlockVaultFromKeystore]).
+  List<int>? vaultKey;
   AppSettings settings;
 
   AppServices._({
@@ -87,7 +104,12 @@ class AppServices {
     String p(String name) => '${dir.path}/$name';
 
     final masterKeys = MasterKeyManager();
-    final vaultKey = await masterKeys.loadOrCreateFromKeystore();
+    // May be null when the OS keystore is locked or unavailable (locked login
+    // keyring on auto-login systems, no Secret Service daemon on minimal
+    // desktops): the app then starts with a locked vault — secrets unreadable
+    // and unwritable with a clear error, retry offered in the UI — instead of
+    // crashing before the shell exists.
+    final vaultKey = await masterKeys.probeKeystore();
 
     final configStore = FileConfigStore(File(p('servers.json')));
     final snippetStore = FileSnippetStore(File(p('snippets.json')));
@@ -116,7 +138,9 @@ class AppServices {
     return AppServices._(
       configStore: configStore,
       snippetStore: snippetStore,
-      vault: SecretVault(vaultStore, vaultKey),
+      vault: vaultKey == null
+          ? LockedSecretVault(vaultStore)
+          : SecretVault(vaultStore, vaultKey),
       hostKeyStore: hostKeyStore,
       tofu: TofuVerifier(hostKeyStore),
       probe: ProbeService(),
@@ -130,6 +154,18 @@ class AppServices {
       vaultKey: vaultKey,
       settings: settings,
     );
+  }
+
+  /// Re-probe the OS keystore and, if it's back, unlock the vault in place
+  /// (existing references to [vault] keep working — the key is swapped into a
+  /// fresh instance). Returns whether the vault has a key afterwards.
+  Future<bool> unlockVaultFromKeystore() async {
+    if (vaultKey != null) return true;
+    final key = await masterKeys.probeKeystore();
+    if (key == null) return false;
+    vault = SecretVault(vault.store, key);
+    vaultKey = key;
+    return true;
   }
 
   /// True when the settings file could not be parsed at startup and was moved
@@ -280,14 +316,35 @@ class AppServices {
     final baseUrl = settings.syncBaseUrl;
     final token = await masterKeys.getApiKey('sync.token');
     if (baseUrl == null || token == null) {
+      // A configured account that suddenly reads as "not set up" means the
+      // keystore (which holds the token) is down — say that, not "set up sync".
+      if (baseUrl != null &&
+          masterKeys.keystoreStatus == KeystoreStatus.unavailable) {
+        throw StateError(
+          'Sync is configured, but the OS keyring is locked or unavailable '
+          '(${masterKeys.lastKeystoreError ?? 'no details'}) — the sync token '
+          'and the vault key live there. Unlock the keyring and sync again.',
+        );
+      }
       throw StateError('Sync is not set up');
+    }
+    // The keystore answered for the token; the vault key may still be missing
+    // if the keystore was down at bootstrap — retry it now.
+    if (vaultKey == null) await unlockVaultFromKeystore();
+    final key = vaultKey;
+    if (key == null) {
+      throw StateError(
+        'The vault is locked: the OS keyring is unavailable '
+        '(${masterKeys.lastKeystoreError ?? 'no details'}). Unlock the keyring '
+        'and sync again.',
+      );
     }
     final client = HttpSyncClient(baseUrl: baseUrl)..token = token;
     final coordinator = SyncCoordinator(
       configStore: configStore,
       hostKeyStore: hostKeyStore,
       snippetStore: snippetStore,
-      codec: RecordCodec(vaultKey),
+      codec: RecordCodec(key),
       local: InMemoryLocalRecordStore(),
       deviceId: settings.deviceId,
       syncSecrets: settings.syncSecrets,
@@ -298,6 +355,11 @@ class AppServices {
 
   /// Resolve connection credentials for [config] from the vault / on-disk key.
   Future<SshCredentials> resolveCredentials(ServerConfig config) async {
+    // Lazily re-probe a keystore that was down at bootstrap, so a keyring that
+    // came back (or just got unlocked) unlocks secrets without an app restart.
+    if (config.secretRef != null && vaultKey == null) {
+      await unlockVaultFromKeystore();
+    }
     switch (config.authMethod) {
       case AuthMethod.agent:
         return const SshCredentials.agent();

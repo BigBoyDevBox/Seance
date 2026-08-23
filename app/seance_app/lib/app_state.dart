@@ -391,7 +391,8 @@ class AppState extends ChangeNotifier {
 
   /// Recompute whether the assistant is usable: a key-based provider needs a
   /// stored API key; a local OpenAI-compatible endpoint (Ollama, LM Studio)
-  /// works keyless as long as a base URL is set.
+  /// works keyless as long as a base URL is set. Keystore errors read as
+  /// "no key" here (the masterKeys layer is tolerant on reads).
   Future<void> refreshLlmConfigured() async {
     final s = services.settings;
     final storedKey = s.llmApiKeyRef.isEmpty
@@ -736,6 +737,16 @@ class AppState extends ChangeNotifier {
     } finally {
       syncing = false;
       notifyListeners();
+    }
+  }
+
+  /// The vault just unlocked (the OS keystore came back after being down at
+  /// bootstrap): re-evaluate what depended on it — the assistant key check and
+  /// the sync round that couldn't run.
+  Future<void> onVaultUnlocked() async {
+    await refreshLlmConfigured();
+    if (services.settings.autoSync && services.isSyncConfigured) {
+      unawaited(_autoSync());
     }
   }
 
