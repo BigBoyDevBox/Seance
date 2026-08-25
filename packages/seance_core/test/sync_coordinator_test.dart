@@ -154,6 +154,43 @@ void main() {
     expect((await cfgA.getServer('s1'))!.group, 'Staging');
   });
 
+  test('a server\'s login script travels with it, and clearing it converges',
+      () async {
+    final srv = FakeServer();
+    final codec = RecordCodec(secureRandomBytes(32));
+
+    final cfgA = InMemoryConfigStore();
+    final cfgB = InMemoryConfigStore();
+    await cfgA.putServer(server('s1', 'alpha', 10).copyWith(
+      loginScript: 'cd /srv/app\ntail -f app.log',
+      updatedAt: 10,
+    ));
+
+    SyncCoordinator coord(ConfigStore c, String dev) => SyncCoordinator(
+        configStore: c,
+        hostKeyStore: InMemoryHostKeyStore(),
+        codec: codec,
+        local: InMemoryLocalRecordStore(),
+        deviceId: dev);
+
+    await coord(cfgA, 'A').run(srv);
+    await coord(cfgB, 'B').run(srv);
+
+    // The script rides the sealed record verbatim — the payload is opaque
+    // JSON, so a new field needs no sync-layer change to travel. This pins
+    // that assumption.
+    final onB = (await cfgB.getServer('s1'))!;
+    expect(onB.loginScript, 'cd /srv/app\ntail -f app.log');
+
+    // Clearing it is an ordinary edit and converges the same way.
+    await cfgB
+        .putServer(onB.copyWith(clearLoginScript: true, updatedAt: 50));
+    await coord(cfgB, 'B').run(srv);
+    await coord(cfgA, 'A').run(srv);
+
+    expect((await cfgA.getServer('s1'))!.loginScript, isNull);
+  });
+
   test('snippets sync between two devices', () async {
     final srv = FakeServer();
     final codec = RecordCodec(secureRandomBytes(32));

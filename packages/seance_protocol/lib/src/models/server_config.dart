@@ -136,6 +136,21 @@ class ServerConfig {
   /// unrecognized-value behavior, which is identical.
   final ServerIcon? icon;
 
+  /// A command to run on the remote host once the shell opens, or null for
+  /// none.
+  ///
+  /// It is sent as keyboard input into the interactive session — not executed
+  /// on a separate channel — so "set up *this* shell" scripts behave as
+  /// expected: `cd`, `tmux attach`, exporting aliases all land in the session
+  /// you are looking at, and anything the script prints appears in the
+  /// scrollback like typed output would. The trade-offs of that choice: the
+  /// keystrokes are queued before the shell exists, so on servers where login
+  /// itself reads stdin (a passphrase prompt, a forced menu) the script's
+  /// first lines feed that prompt instead of running; and like anything typed,
+  /// both the script and its output are echoed into scrollback — this field
+  /// is no place for secrets.
+  final String? loginScript;
+
   final int createdAt;
   final int updatedAt;
 
@@ -153,6 +168,7 @@ class ServerConfig {
     this.group,
     this.color,
     this.icon,
+    this.loginScript,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -176,6 +192,8 @@ class ServerConfig {
     bool clearColor = false,
     ServerIcon? icon,
     bool clearIcon = false,
+    String? loginScript,
+    bool clearLoginScript = false,
     int? updatedAt,
   }) {
     return ServerConfig(
@@ -197,6 +215,9 @@ class ServerConfig {
       group: clearGroup ? null : normalizeServerGroup(group ?? this.group),
       color: clearColor ? null : (color ?? this.color),
       icon: clearIcon ? null : (icon ?? this.icon),
+      loginScript: clearLoginScript
+          ? null
+          : normalizeLoginScript(loginScript ?? this.loginScript),
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -216,6 +237,7 @@ class ServerConfig {
         if (group != null) 'group': group,
         if (color != null) 'color': color!.name,
         if (icon != null) 'icon': icon!.name,
+        if (loginScript != null) 'loginScript': loginScript,
         'createdAt': createdAt,
         'updatedAt': updatedAt,
       };
@@ -237,6 +259,7 @@ class ServerConfig {
         group: normalizeServerGroup(json['group'] as String?),
         color: _colorFromName(json['color'] as String?),
         icon: _iconFromName(json['icon'] as String?),
+        loginScript: normalizeLoginScript(json['loginScript'] as String?),
         createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
         updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
       );
@@ -249,6 +272,21 @@ class ServerConfig {
 String? normalizeServerGroup(String? group) {
   if (group == null) return null;
   final trimmed = group.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+/// The stored form of a login script: CR family line endings canonicalized to
+/// LF and outer edges trimmed (so an editor's trailing newline doesn't survive
+/// as a stray Enter keystroke), with blank meaning "none". Interior newlines
+/// are the point of a multi-line script and are kept verbatim — after
+/// canonicalization, because a `\r` inside a line reaches a PTY's line
+/// discipline as an Enter of its own, turning one stored line into two.
+String? normalizeLoginScript(String? script) {
+  if (script == null) return null;
+  final trimmed = script
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .trim();
   return trimmed.isEmpty ? null : trimmed;
 }
 

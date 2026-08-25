@@ -54,6 +54,7 @@ void main() {
       expect(json.containsKey('group'), isFalse);
       expect(json.containsKey('color'), isFalse);
       expect(json.containsKey('icon'), isFalse);
+      expect(json.containsKey('loginScript'), isFalse);
     });
 
     test('ServerConfig tolerates a group or an accent it does not know', () {
@@ -131,6 +132,65 @@ void main() {
           'group': '  Production  ',
         }).toJson()['group'],
       );
+    });
+
+    test('ServerConfig round-trips a multi-line login script', () {
+      final script = 'cd /srv/app\ndocker compose ps\ntmux attach -t work';
+      final c = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        loginScript: script,
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      final back = ServerConfig.fromJson(c.toJson());
+      expect(back.loginScript, script);
+      expect(back.toJson(), equals(c.toJson()));
+    });
+
+    test('login scripts normalize their edges but keep interior newlines', () {
+      final base = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      // A trailing newline must not survive as a stray Enter keystroke, while
+      // the interior lines are the point of a multi-line script.
+      final normalized = ServerConfig.fromJson({
+        ...base.toJson(),
+        'loginScript': '  cd work \n\ntail -f log  ',
+      });
+      expect(normalized.loginScript, 'cd work \n\ntail -f log');
+      // Blank means none, by either route in.
+      expect(normalized.copyWith(loginScript: '   ').loginScript, isNull);
+      expect(base.copyWith(loginScript: '').loginScript, isNull);
+      expect(base.copyWith(clearLoginScript: true).loginScript, isNull);
+      expect(base.copyWith(loginScript: null).loginScript, isNull);
+    });
+
+    test('login scripts canonicalize CR line endings to LF', () {
+      final base = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      // A \r inside a line reaches a PTY's line discipline as an Enter of its
+      // own — one pasted-from-Windows line would otherwise run twice.
+      final crlf = ServerConfig.fromJson({
+        ...base.toJson(),
+        'loginScript': 'cd work\r\ntail -f log\r\n',
+      });
+      expect(crlf.loginScript, 'cd work\ntail -f log');
+      final crOnly = base.copyWith(loginScript: 'cd work\rtail -f log\r');
+      expect(crOnly.loginScript, 'cd work\ntail -f log');
     });
 
     test('Secret does not leak its value in toString', () {

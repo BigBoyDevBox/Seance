@@ -42,6 +42,7 @@ class _ServerEditorState extends State<_ServerEditor> {
   final _keyPem = TextEditingController();
   final _keyPath = TextEditingController();
   final _keyPassphrase = TextEditingController();
+  final _loginScript = TextEditingController();
 
   late AuthMethod _auth;
   late ServerColor? _color;
@@ -74,6 +75,7 @@ class _ServerEditorState extends State<_ServerEditor> {
     _auth = e?.authMethod ?? AuthMethod.password;
     _keyPath.text = e?.identityFilePath ?? '';
     _referenceKeyFile = e?.identityFilePath != null;
+    _loginScript.text = e?.loginScript ?? '';
     if (e != null) {
       // Load the stored grant with the path it was actually minted for (which
       // a synced edit may have diverged from), so re-saving can't re-bless a
@@ -99,7 +101,8 @@ class _ServerEditorState extends State<_ServerEditor> {
       _password,
       _keyPem,
       _keyPath,
-      _keyPassphrase
+      _keyPassphrase,
+      _loginScript
     ]) {
       c.dispose();
     }
@@ -166,6 +169,8 @@ class _ServerEditorState extends State<_ServerEditor> {
             ),
             const SizedBox(height: 8),
             ..._authFields(),
+            const SizedBox(height: 20),
+            ..._loginScriptFields(),
             const SizedBox(height: 20),
             ..._appearanceFields(),
             const SizedBox(height: 20),
@@ -257,6 +262,36 @@ class _ServerEditorState extends State<_ServerEditor> {
           if (!_referenceKeyFile) _syncSecretToggle(),
         ];
     }
+  }
+
+  /// An optional command to run in this server's shell once it opens. Typed
+  /// into the session rather than executed on a side channel, so `cd`, `tmux
+  /// attach`, and friends do what they would if the user had typed them —
+  /// which is also the honest description to show for it.
+  List<Widget> _loginScriptFields() {
+    return [
+      const Divider(),
+      const SizedBox(height: 8),
+      TextFormField(
+        controller: _loginScript,
+        maxLines: 3,
+        minLines: 1,
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        decoration: const InputDecoration(
+          labelText: 'Login script (optional)',
+          hintText: 'e.g. cd ~/work && tmux attach -t work || tmux new -s work',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        'Runs as if typed at the prompt right after connecting. Its text and '
+        'output land in scrollback — keep secrets out. Blank for none.',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).hintColor,
+            ),
+      ),
+    ];
   }
 
   /// How this server is filed and marked in the list: its group, its accent
@@ -420,6 +455,7 @@ class _ServerEditorState extends State<_ServerEditor> {
       group: normalizeServerGroup(_group.text),
       color: _color,
       icon: _icon,
+      loginScript: normalizeLoginScript(_loginScript.text),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     );

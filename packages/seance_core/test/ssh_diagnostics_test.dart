@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dartssh2/dartssh2.dart' show SSHAuthFailError;
 import 'package:seance_core/seance_core.dart';
 import 'package:test/test.dart';
@@ -196,6 +198,57 @@ void main() {
         throwsA(isA<UnsupportedError>()),
       );
       await engine.dispose();
+    });
+  });
+
+  group('login script keystrokes', () {
+    test('the script is one typed line: text plus a single Enter', () {
+      final bytes = SshSessionManager.loginScriptKeystrokes('tmux attach');
+      expect(bytes, utf8.encode('tmux attach\n'));
+    });
+
+    test('interior newlines survive; outer edges do not', () {
+      // Each interior line executes in order, like a pasted multi-line
+      // command; the trailing newline of the stored form must not become a
+      // stray second Enter that runs an empty line.
+      final bytes = SshSessionManager.loginScriptKeystrokes(
+        ' cd work \n\ntail -f log \n',
+      );
+      expect(bytes, utf8.encode('cd work \n\ntail -f log\n'));
+    });
+
+    test('non-ASCII survives the trip to bytes', () {
+      final bytes = SshSessionManager.loginScriptKeystrokes('echo héllo→');
+      expect(utf8.decode(bytes), 'echo héllo→\n');
+    });
+
+    test('blank input is rejected with a clear error', () {
+      expect(() => SshSessionManager.loginScriptKeystrokes('   '),
+          throwsArgumentError);
+      expect(() => SshSessionManager.loginScriptKeystrokes(''),
+          throwsArgumentError);
+    });
+
+    ServerConfig configWithScript(String? script) => ServerConfig(
+          id: 's1',
+          label: 'l',
+          host: 'h',
+          username: 'u',
+          loginScript: script,
+          createdAt: 1,
+          updatedAt: 2,
+        );
+
+    test('a config without a usable script contributes no keystrokes', () {
+      // The const constructor does not normalize, so the connect-time seam
+      // must decide on its own that whitespace-only means "nothing to run".
+      expect(SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript(null)), isNull);
+      expect(SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript('  \r\n ')), isNull);
+      final keystrokes = SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript('cd work'));
+      expect(keystrokes, utf8.encode('cd work\n'));
     });
   });
 }
