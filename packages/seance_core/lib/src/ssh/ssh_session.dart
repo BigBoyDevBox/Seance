@@ -302,9 +302,10 @@ class SshSessionManager {
     return approved;
   }
 
-  /// What running [config]'s [ServerConfig.loginScript] looks like on the
-  /// wire: the script's bytes (edges trimmed) plus one Enter, i.e. exactly the
-  /// keystrokes of the user having typed it at the prompt themselves.
+  /// What running [script] at a prompt looks like on the wire: its bytes
+  /// (edges trimmed) plus one Enter, i.e. exactly the keystrokes of the user
+  /// having typed it themselves. Throws for blank input — there is nothing to
+  /// type.
   ///
   /// Written into the interactive shell rather than executed on a separate
   /// channel, so `cd`, aliases, and `tmux attach` affect *this* session and
@@ -312,20 +313,37 @@ class SshSessionManager {
   /// precedes it: a PTY buffers input until the remote shell reads, so a
   /// script sent during login banner/init simply runs once the prompt is up.
   @visibleForTesting
-  static Uint8List loginScriptKeystrokes(String script) =>
-      Uint8List.fromList(utf8.encode('${normalizeLoginScript(script)!}\n'));
+  static Uint8List loginScriptKeystrokes(String script) {
+    final normalized = normalizeLoginScript(script);
+    if (normalized == null) {
+      throw ArgumentError.value(script, 'script', 'must be non-blank');
+    }
+    return utf8.encode('$normalized\n');
+  }
+
+  /// The keystrokes [config]'s optional login script contributes, or null when
+  /// there is nothing to run. The seam between "does this config want a login
+  /// script" and the live shell, so both halves are testable without an SSH
+  /// handshake (see [loginScriptKeystrokes]).
+  @visibleForTesting
+  static Uint8List? loginScriptKeystrokesFor(ServerConfig config) =>
+      normalizeLoginScript(config.loginScript) == null
+          ? null
+          : loginScriptKeystrokes(config.loginScript!);
 
   /// Send [config]'s optional login script into the freshly opened [shell].
-  /// Best-effort by design — a failure here means the channel just died, which
-  /// the session teardown reports anyway.
   void _runLoginScript(
       SSHSession shell, ServerConfig config, void Function(String) note) {
-    // Guard on the normalized form: the const constructor does not normalize,
-    // so a hand-built config could carry a whitespace-only script.
-    final script = normalizeLoginScript(config.loginScript);
-    if (script == null) return;
+    final keystrokes = loginScriptKeystrokesFor(config);
+    if (keystrokes == null) return;
     note('Running login script.');
-    shell.write(loginScriptKeystrokes(script));
+    try {
+      shell.write(keystrokes);
+    } catch (_) {
+      // Best-effort by design: the channel died between open and write. The
+      // session teardown reports that fault; letting it escape here would
+      // resurface as a connect failure for a session that authenticated fine.
+    }
   }
 
   Future<SshSession> connect({

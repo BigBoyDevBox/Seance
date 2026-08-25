@@ -221,5 +221,34 @@ void main() {
       final bytes = SshSessionManager.loginScriptKeystrokes('echo héllo→');
       expect(utf8.decode(bytes), 'echo héllo→\n');
     });
+
+    test('blank input is rejected with a clear error', () {
+      expect(() => SshSessionManager.loginScriptKeystrokes('   '),
+          throwsArgumentError);
+      expect(() => SshSessionManager.loginScriptKeystrokes(''),
+          throwsArgumentError);
+    });
+
+    ServerConfig configWithScript(String? script) => ServerConfig(
+          id: 's1',
+          label: 'l',
+          host: 'h',
+          username: 'u',
+          loginScript: script,
+          createdAt: 1,
+          updatedAt: 2,
+        );
+
+    test('a config without a usable script contributes no keystrokes', () {
+      // The const constructor does not normalize, so the connect-time seam
+      // must decide on its own that whitespace-only means "nothing to run".
+      expect(SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript(null)), isNull);
+      expect(SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript('  \r\n ')), isNull);
+      final keystrokes = SshSessionManager.loginScriptKeystrokesFor(
+          configWithScript('cd work'));
+      expect(keystrokes, utf8.encode('cd work\n'));
+    });
   });
 }

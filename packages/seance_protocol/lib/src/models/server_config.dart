@@ -143,10 +143,12 @@ class ServerConfig {
   /// on a separate channel — so "set up *this* shell" scripts behave as
   /// expected: `cd`, `tmux attach`, exporting aliases all land in the session
   /// you are looking at, and anything the script prints appears in the
-  /// scrollback like typed output would. The trade-off of that choice is that
-  /// it runs when the remote shell reads input; if login itself blocks (a
-  /// passphrase prompt, a forced menu), the script waits behind it rather than
-  /// failing.
+  /// scrollback like typed output would. The trade-offs of that choice: the
+  /// keystrokes are queued before the shell exists, so on servers where login
+  /// itself reads stdin (a passphrase prompt, a forced menu) the script's
+  /// first lines feed that prompt instead of running; and like anything typed,
+  /// both the script and its output are echoed into scrollback — this field
+  /// is no place for secrets.
   final String? loginScript;
 
   final int createdAt;
@@ -272,13 +274,18 @@ String? normalizeServerGroup(String? group) {
   return trimmed.isEmpty ? null : trimmed;
 }
 
-/// The stored form of a login script: outer edges trimmed (so an editor's
-/// trailing newline doesn't survive as a stray Enter keystroke), with blank
-/// meaning "none". Interior newlines are the point of a multi-line script and
-/// are kept verbatim.
+/// The stored form of a login script: CR family line endings canonicalized to
+/// LF and outer edges trimmed (so an editor's trailing newline doesn't survive
+/// as a stray Enter keystroke), with blank meaning "none". Interior newlines
+/// are the point of a multi-line script and are kept verbatim — after
+/// canonicalization, because a `\r` inside a line reaches a PTY's line
+/// discipline as an Enter of its own, turning one stored line into two.
 String? normalizeLoginScript(String? script) {
   if (script == null) return null;
-  final trimmed = script.trim();
+  final trimmed = script
+      .replaceAll('\r\n', '\n')
+      .replaceAll('\r', '\n')
+      .trim();
   return trimmed.isEmpty ? null : trimmed;
 }
 

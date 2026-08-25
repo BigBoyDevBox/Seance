@@ -285,8 +285,8 @@ class _ServerEditorState extends State<_ServerEditor> {
       ),
       const SizedBox(height: 4),
       Text(
-        'Runs as if typed at the prompt right after connecting. '
-        'Blank for none.',
+        'Runs as if typed at the prompt right after connecting. Its text and '
+        'output land in scrollback — keep secrets out. Blank for none.',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).hintColor,
             ),

@@ -173,6 +173,26 @@ void main() {
       expect(base.copyWith(loginScript: null).loginScript, isNull);
     });
 
+    test('login scripts canonicalize CR line endings to LF', () {
+      final base = ServerConfig(
+        id: 's1',
+        label: 'l',
+        host: 'h',
+        username: 'u',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      // A \r inside a line reaches a PTY's line discipline as an Enter of its
+      // own — one pasted-from-Windows line would otherwise run twice.
+      final crlf = ServerConfig.fromJson({
+        ...base.toJson(),
+        'loginScript': 'cd work\r\ntail -f log\r\n',
+      });
+      expect(crlf.loginScript, 'cd work\ntail -f log');
+      final crOnly = base.copyWith(loginScript: 'cd work\rtail -f log\r');
+      expect(crOnly.loginScript, 'cd work\ntail -f log');
+    });
+
     test('Secret does not leak its value in toString', () {
       final s = Secret(id: 's1', kind: SecretKind.password, value: 'hunter2');
       expect(s.toString(), isNot(contains('hunter2')));
