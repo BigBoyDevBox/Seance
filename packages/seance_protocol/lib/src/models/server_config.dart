@@ -215,8 +215,9 @@ class ServerConfig {
       group: clearGroup ? null : normalizeServerGroup(group ?? this.group),
       color: clearColor ? null : (color ?? this.color),
       icon: clearIcon ? null : (icon ?? this.icon),
-      loginScript:
-          clearLoginScript ? null : normalizeLoginScript(loginScript ?? this.loginScript),
+      loginScript: clearLoginScript
+          ? null
+          : normalizeLoginScript(loginScript ?? this.loginScript),
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
