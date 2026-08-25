@@ -302,6 +302,32 @@ class SshSessionManager {
     return approved;
   }
 
+  /// What running [config]'s [ServerConfig.loginScript] looks like on the
+  /// wire: the script's bytes (edges trimmed) plus one Enter, i.e. exactly the
+  /// keystrokes of the user having typed it at the prompt themselves.
+  ///
+  /// Written into the interactive shell rather than executed on a separate
+  /// channel, so `cd`, aliases, and `tmux attach` affect *this* session and
+  /// the script's output lands in scrollback. No wait-for-prompt handshake
+  /// precedes it: a PTY buffers input until the remote shell reads, so a
+  /// script sent during login banner/init simply runs once the prompt is up.
+  @visibleForTesting
+  static Uint8List loginScriptKeystrokes(String script) =>
+      Uint8List.fromList(utf8.encode('${normalizeLoginScript(script)!}\n'));
+
+  /// Send [config]'s optional login script into the freshly opened [shell].
+  /// Best-effort by design — a failure here means the channel just died, which
+  /// the session teardown reports anyway.
+  void _runLoginScript(
+      SSHSession shell, ServerConfig config, void Function(String) note) {
+    // Guard on the normalized form: the const constructor does not normalize,
+    // so a hand-built config could carry a whitespace-only script.
+    final script = normalizeLoginScript(config.loginScript);
+    if (script == null) return;
+    note('Running login script.');
+    shell.write(loginScriptKeystrokes(script));
+  }
+
   Future<SshSession> connect({
     required ServerConfig config,
     required SshCredentials credentials,
@@ -392,6 +418,9 @@ class SshSessionManager {
       );
       note('Authenticated. Shell session opened.');
       final session = SshSession._(client, shell, engine).._wire();
+      // After _wire(), so the script's echo and output are captured by the
+      // engine from its very first bytes.
+      _runLoginScript(shell, config, note);
       return session;
     } catch (e) {
       final summary = _summarizeFailure(e, config, target, credentials, log);

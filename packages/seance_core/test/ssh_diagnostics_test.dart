@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dartssh2/dartssh2.dart' show SSHAuthFailError;
 import 'package:seance_core/seance_core.dart';
 import 'package:test/test.dart';
@@ -196,6 +198,28 @@ void main() {
         throwsA(isA<UnsupportedError>()),
       );
       await engine.dispose();
+    });
+  });
+
+  group('login script keystrokes', () {
+    test('the script is one typed line: text plus a single Enter', () {
+      final bytes = SshSessionManager.loginScriptKeystrokes('tmux attach');
+      expect(bytes, utf8.encode('tmux attach\n'));
+    });
+
+    test('interior newlines survive; outer edges do not', () {
+      // Each interior line executes in order, like a pasted multi-line
+      // command; the trailing newline of the stored form must not become a
+      // stray second Enter that runs an empty line.
+      final bytes = SshSessionManager.loginScriptKeystrokes(
+        ' cd work \n\ntail -f log \n',
+      );
+      expect(bytes, utf8.encode('cd work \n\ntail -f log\n'));
+    });
+
+    test('non-ASCII survives the trip to bytes', () {
+      final bytes = SshSessionManager.loginScriptKeystrokes('echo héllo→');
+      expect(utf8.decode(bytes), 'echo héllo→\n');
     });
   });
 }
