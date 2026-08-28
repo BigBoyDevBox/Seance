@@ -1,5 +1,4 @@
-import 'dart:io' show Platform;
-
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:seance_core/seance_core.dart';
 
@@ -301,8 +300,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       // Android freezes cached processes, killing every live SSH connection
       // moments after the app leaves the screen; only this platform needs (and
-      // has) a mechanism to opt out of that.
-      if (Platform.isAndroid) ...[
+      // has) a mechanism to opt out of that. dart:io's Platform would crash on
+      // a web build; foundation's target detection compiles everywhere.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
         const SizedBox(height: 8),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -820,10 +820,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Persist the background keep-alive toggle and apply it to live sessions.
+  /// A failed save reverts the switch and the in-memory setting: the toggle
+  /// must not show a state neither disk nor the running anchor is in.
   Future<void> _persistKeepSessionsAlive(AppState state) async {
     state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
-    await state.services.saveSettings();
-    state.setKeepSessionsAliveEnabled(_keepSessionsAlive);
+    try {
+      await state.services.saveSettings();
+      state.setKeepSessionsAliveEnabled(_keepSessionsAlive);
+    } catch (_) {
+      setState(() => _keepSessionsAlive = !_keepSessionsAlive);
+      state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
+    }
   }
 
   /// Persist terminal appearance and repaint every live session. Called on

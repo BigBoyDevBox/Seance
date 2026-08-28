@@ -3,6 +3,7 @@ package com.lkm.seance_app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -28,7 +29,10 @@ class KeepAliveService : Service() {
     companion object {
         const val EXTRA_SESSION_COUNT = "sessionCount"
         private const val CHANNEL_ID = "seance.keepalive"
-        private const val NOTIFICATION_ID = 1
+        // Distinctive on purpose: notification ids share one app-wide space
+        // with anything plugins post, and a collision with an ongoing
+        // foreground notification misbehaves visibly.
+        private const val NOTIFICATION_ID = 7343
 
         /** Whether the service is running; mutated only by its lifecycle. */
         @Volatile
@@ -36,10 +40,13 @@ class KeepAliveService : Service() {
             private set
 
         fun start(context: Context, sessionCount: Int) {
-            if (isActive) {
-                update(context, sessionCount)
-                return
-            }
+            // Always deliver a fresh start command rather than short-circuit
+            // on isActive: stop() → onDestroy is asynchronous, so a quick
+            // deactivate→activate (reconnect churn) could otherwise see a
+            // stale true, only update the notification, and then die with the
+            // teardown — silently unanchoring the process. Repeated starts are
+            // idempotent; onStartCommand re-invokes startForeground with the
+            // current count.
             val intent = Intent(context, KeepAliveService::class.java)
                 .putExtra(EXTRA_SESSION_COUNT, sessionCount)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -75,6 +82,19 @@ class KeepAliveService : Service() {
                     "Keeping $sessionCount $sessions alive in the background."
                 )
                 .setSmallIcon(R.mipmap.ic_launcher)
+                // Tap → back into the app: the notification is the feature's
+                // most visible surface, and an untappable ongoing entry reads
+                // as broken.
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        context,
+                        0,
+                        context.packageManager.getLaunchIntentForPackage(
+                            context.packageName
+                        ),
+                        PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .build()
@@ -110,9 +130,20 @@ class KeepAliveService : Service() {
     }
 
     override fun onTimeout(startId: Int) {
-        // Android 15 caps dataSync foreground services (~6 h). Stop cleanly:
-        // the app becomes freezable again and sessions drop exactly as they
-        // would without the anchor — the reconnect flow already covers that.
+        // Variant delivered to apps targeting API ≤ 34; targetSdk 35+ gets
+        // the two-argument overload below instead.
+        stopAnchor()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopAnchor()
+    }
+
+    private fun stopAnchor() {
+        // Recent Android caps dataSync foreground services (~6 h per day).
+        // Stop cleanly: the app becomes freezable again and sessions drop
+        // exactly as they would without the anchor — the reconnect flow
+        // already covers that.
         stopSelf()
     }
 

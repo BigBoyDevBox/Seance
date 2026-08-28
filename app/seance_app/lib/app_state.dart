@@ -382,6 +382,10 @@ class AppState extends ChangeNotifier {
     await _seedDefaultSnippets();
     snippets = await services.snippetStore.listSnippets();
     await refreshLlmConfigured();
+    // Invariant insurance: if any restore path ever leaves a session
+    // connecting or connected, the anchor must reflect it before the app can
+    // be backgrounded. (Today's restores insert disconnected placeholders.)
+    _refreshKeepAlive();
     _recomputeSuggestions();
     // Skip hosts that already hold a live session: they are demonstrably
     // reachable, and probing them only adds an sshd log line every sweep.
@@ -1184,7 +1188,7 @@ class AppState extends ChangeNotifier {
     _statsSaveDebounce?.cancel();
     // Nothing anchors a dying app: drop the OS keep-alive before the sessions
     // it was holding open go.
-    _keepAlive.refresh(0);
+    _keepAlive.stop();
     chat.dispose();
     // Drop the callback before the service goes: it closes over `sessions`,
     // so a probe service that outlived this state would keep reading a list

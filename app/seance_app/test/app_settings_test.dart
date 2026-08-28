@@ -28,7 +28,11 @@ void main() {
     final restored = AppSettings.fromJson(off.toJson());
     expect(restored.keepSessionsAliveInBackground, isFalse);
 
-    final json = AppSettings().toJson()..remove('keepSessionsAliveInBackground');
+    // containsKey guards the removal: if the serialization key is ever
+    // renamed, this must fail instead of vacuously testing the default.
+    final json = AppSettings().toJson();
+    expect(json.containsKey('keepSessionsAliveInBackground'), isTrue);
+    json.remove('keepSessionsAliveInBackground');
     expect(AppSettings.fromJson(json).keepSessionsAliveInBackground, isTrue);
   });
 

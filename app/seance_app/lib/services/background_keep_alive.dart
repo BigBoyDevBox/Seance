@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show Timer, unawaited;
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint;
@@ -67,13 +67,19 @@ class MethodChannelBackgroundKeepAliveBackend
 /// holds the process out of the freezer. The user can opt out via settings.
 ///
 /// Pure state machine over the reported live-session count: it activates
-/// once on 0 → n, coalesces repeats into count updates, deactivates once on
-/// n → 0, and a disabled keep-alive neither activates nor stays active.
+/// once on 0 → n, coalesces repeats into count updates, and deactivates once
+/// on n → 0 — but not instantly. Zero-crossings are often transient (a failed
+/// connect, a retry in flight), and cycling a foreground service that fast
+/// flickers its notification; the anchor lingers for [_deactivateGrace] and a
+/// new count within the window simply reuses it.
 class BackgroundKeepAlive {
   BackgroundKeepAlive({
     BackgroundKeepAliveBackend? backend,
     this._enabled = true,
   }) : _backend = backend ?? const MethodChannelBackgroundKeepAliveBackend();
+
+  /// How long the anchor survives the last session before being dropped.
+  static const Duration _deactivateGrace = Duration(seconds: 1);
 
   final BackgroundKeepAliveBackend _backend;
   bool _enabled;
@@ -82,6 +88,7 @@ class BackgroundKeepAlive {
   int _anchoredCount = 0;
   bool _anchored = false;
   int _lastCount = 0;
+  Timer? _deactivateTimer;
 
   /// Apply the user's keep-alive setting. Enabling re-anchors immediately for
   /// the sessions already live; disabling drops an active anchor and keeps
@@ -89,12 +96,7 @@ class BackgroundKeepAlive {
   void setEnabled(bool enabled) {
     if (enabled == _enabled) return;
     _enabled = enabled;
-    if (enabled) {
-      _anchor(_lastCount);
-    } else if (_anchored) {
-      _anchored = false;
-      unawaited(_backend.deactivate());
-    }
+    enabled ? _anchor(_lastCount) : _deactivateNow();
   }
 
   /// Report the current number of connecting/connected sessions. Call after
@@ -105,13 +107,22 @@ class BackgroundKeepAlive {
     _anchor(sessionCount);
   }
 
+  /// Drop the anchor immediately, grace ignored. For teardown, where nothing
+  /// will re-anchor afterwards.
+  void stop() {
+    _lastCount = 0;
+    _deactivateNow();
+  }
+
   void _anchor(int count) {
     if (count <= 0) {
-      if (!_anchored) return;
-      _anchored = false;
-      unawaited(_backend.deactivate());
+      // Already dropping (or nothing anchored): a second zero changes nothing.
+      if (!_anchored || _deactivateTimer != null) return;
+      _deactivateTimer = Timer(_deactivateGrace, _deactivateNow);
       return;
     }
+    _deactivateTimer?.cancel();
+    _deactivateTimer = null;
     if (_anchored && count == _anchoredCount) return;
     final wasAnchored = _anchored;
     _anchored = true;
@@ -121,5 +132,14 @@ class BackgroundKeepAlive {
           ? _backend.sessionCountChanged(count)
           : _backend.activate(count),
     );
+  }
+
+  void _deactivateNow() {
+    _deactivateTimer?.cancel();
+    _deactivateTimer = null;
+    if (!_anchored) return;
+    _anchored = false;
+    _anchoredCount = 0;
+    unawaited(_backend.deactivate());
   }
 }
