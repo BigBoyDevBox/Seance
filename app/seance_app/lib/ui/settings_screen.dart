@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:seance_core/seance_core.dart';
 
@@ -38,6 +40,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late bool _syncSecrets;
   late bool _commandSuggestions;
   late bool _checkForUpdates;
+  late bool _keepSessionsAlive;
   late EditorRegistry _editorRegistry;
   late double _terminalFontSize;
   late TerminalPalette _terminalPalette;
@@ -73,6 +76,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _syncSecrets = s.syncSecrets;
     _commandSuggestions = s.commandSuggestions;
     _checkForUpdates = s.checkForUpdates;
+    _keepSessionsAlive = s.keepSessionsAliveInBackground;
     _editorRegistry = s.editorRegistry;
     _terminalFontSize = clampTerminalFontSize(s.terminalFontSize);
     _terminalPalette = s.terminalPalette;
@@ -295,6 +299,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _persistCheckForUpdates(state);
         },
       ),
+      // Android freezes cached processes, killing every live SSH connection
+      // moments after the app leaves the screen; only this platform needs (and
+      // has) a mechanism to opt out of that.
+      if (Platform.isAndroid) ...[
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Keep sessions alive in the background'),
+          subtitle: const Text(
+            'Keeps connections open while Séance is backgrounded, via an '
+            'ongoing Android notification. Uses some battery.',
+          ),
+          value: _keepSessionsAlive,
+          onChanged: (value) {
+            setState(() => _keepSessionsAlive = value);
+            _persistKeepSessionsAlive(state);
+          },
+        ),
+      ],
       const Divider(height: 40),
       _section(
         'Terminal',
@@ -794,6 +817,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     state.services.settings.checkForUpdates = _checkForUpdates;
     await state.services.saveSettings();
     if (!_checkForUpdates) state.dismissUpdateNotice();
+  }
+
+  /// Persist the background keep-alive toggle and apply it to live sessions.
+  Future<void> _persistKeepSessionsAlive(AppState state) async {
+    state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
+    await state.services.saveSettings();
+    state.setKeepSessionsAliveEnabled(_keepSessionsAlive);
   }
 
   /// Persist terminal appearance and repaint every live session. Called on

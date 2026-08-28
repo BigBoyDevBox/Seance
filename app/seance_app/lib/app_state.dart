@@ -7,6 +7,7 @@ import 'package:xterm/xterm.dart' show TerminalController;
 
 import 'services/app_services.dart';
 import 'services/app_settings.dart';
+import 'services/background_keep_alive.dart';
 import 'services/chat_session.dart';
 import 'services/default_snippets.dart';
 import 'services/managed_remote_file.dart';
@@ -308,8 +309,17 @@ class AppState extends ChangeNotifier {
   UpdateInfo? updateInfo;
   final UpdateChecker _updateChecker;
 
-  AppState(this.services, {UpdateChecker? updateChecker})
-    : _updateChecker = updateChecker ?? UpdateChecker() {
+  /// Keeps the process anchored to the OS while sessions are connecting or
+  /// connected, so backgrounding the app on Android doesn't let the OS freeze
+  /// it and drop every live SSH connection. No-op on other platforms.
+  final BackgroundKeepAlive _keepAlive;
+
+  AppState(
+    this.services, {
+    UpdateChecker? updateChecker,
+    BackgroundKeepAlive? keepAlive,
+  })  : _updateChecker = updateChecker ?? UpdateChecker(),
+        _keepAlive = keepAlive ?? BackgroundKeepAlive() {
     _sessionManager = SshSessionManager(
       tofu: services.tofu,
       onHostKey: (decision) async {
@@ -364,6 +374,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    // Honor the keep-alive setting from the very first session event on; the
+    // app can be backgrounded mid-handshake right after opening a tab.
+    _keepAlive.setEnabled(services.settings.keepSessionsAliveInBackground);
     servers = await services.configStore.listServers();
     await _restoreManagedEditSessions();
     await _seedDefaultSnippets();
@@ -527,6 +540,9 @@ class AppState extends ChangeNotifier {
     sessions.insert(insertIndexFor(sessions, config.id), tab);
     _setActive(tab.id);
     notifyListeners();
+    // The tab is `connecting` from here on — the anchor must be up before the
+    // handshake starts, not after it finishes.
+    _refreshKeepAlive();
     await _connect(tab);
   }
 
@@ -592,6 +608,7 @@ class AppState extends ChangeNotifier {
           tab.session = null;
           tab.connecting = false;
           notifyListeners();
+          _refreshKeepAlive();
         }
       };
       // The widget drives resize; forward it to the SSH PTY.
@@ -604,6 +621,7 @@ class AppState extends ChangeNotifier {
       tab.error = e is SshConnectException ? e.message : e.toString();
     }
     notifyListeners();
+    _refreshKeepAlive();
   }
 
   /// Retry a session that failed or dropped: replace it in place with a fresh
@@ -921,6 +939,22 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Apply a change of the "keep sessions alive in the background" setting:
+  /// re-anchor or drop the OS-level keep-alive for the currently live sessions.
+  void setKeepSessionsAliveEnabled(bool enabled) {
+    _keepAlive.setEnabled(enabled);
+    _refreshKeepAlive();
+  }
+
+  /// Recompute how many sessions are connecting or connected and tell the
+  /// keep-alive — that count, not the session identities, is all it needs.
+  /// Called after every mutation of a session's connection state.
+  void _refreshKeepAlive() {
+    _keepAlive.refresh(
+      sessions.where((s) => s.connecting || s.session != null).length,
+    );
+  }
+
   /// React to the app moving in/out of the foreground (wired to the app
   /// lifecycle in `main`). While backgrounded, pause the reachability probe so
   /// it stops opening a TCP connection to every server every ~45s — which would
@@ -1013,6 +1047,7 @@ class AppState extends ChangeNotifier {
     tab.connecting = false;
     tab.error = null;
     notifyListeners();
+    _refreshKeepAlive();
   }
 
   Future<void> discardRetainedLocalCopy(
@@ -1070,6 +1105,7 @@ class AppState extends ChangeNotifier {
       );
     }
     notifyListeners();
+    _refreshKeepAlive();
   }
 
   /// Pick the session to focus after [closed] is removed: the next tab of the
@@ -1146,6 +1182,9 @@ class AppState extends ChangeNotifier {
     _autoSyncTimer?.cancel();
     _syncDebounce?.cancel();
     _statsSaveDebounce?.cancel();
+    // Nothing anchors a dying app: drop the OS keep-alive before the sessions
+    // it was holding open go.
+    _keepAlive.refresh(0);
     chat.dispose();
     // Drop the callback before the service goes: it closes over `sessions`,
     // so a probe service that outlived this state would keep reading a list

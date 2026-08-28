@@ -21,6 +21,17 @@ void main() {
     expect(AppSettings.fromJson(json).checkForUpdates, isTrue);
   });
 
+  test('keepSessionsAliveInBackground defaults on and round-trips', () {
+    expect(AppSettings().keepSessionsAliveInBackground, isTrue);
+
+    final off = AppSettings(keepSessionsAliveInBackground: false);
+    final restored = AppSettings.fromJson(off.toJson());
+    expect(restored.keepSessionsAliveInBackground, isFalse);
+
+    final json = AppSettings().toJson()..remove('keepSessionsAliveInBackground');
+    expect(AppSettings.fromJson(json).keepSessionsAliveInBackground, isTrue);
+  });
+
   test('remote editor and path bookmarks round-trip safely', () {
     final settings = AppSettings(
       editorRegistry: EditorRegistry(
