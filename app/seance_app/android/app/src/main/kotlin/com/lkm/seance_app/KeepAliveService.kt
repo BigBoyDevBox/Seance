@@ -59,7 +59,21 @@ class KeepAliveService : Service() {
 
         /** Refresh the session count on the running service's notification. */
         fun update(context: Context, sessionCount: Int) {
-            if (!isActive) return
+            if (!isActive) {
+                // start() is asynchronous: a sessionCountChanged that lands
+                // between startForegroundService() and onCreate() would
+                // otherwise be dropped, leaving a stale count on the
+                // notification. Re-deliver via start(); it is idempotent and
+                // carries the fresh count.
+                if (sessionCount > 0) {
+                    try {
+                        start(context, sessionCount)
+                    } catch (_: Exception) {
+                        // Best-effort, matching how "activate" treats failures.
+                    }
+                }
+                return
+            }
             context.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification(context, sessionCount))
         }
