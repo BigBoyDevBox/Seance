@@ -820,17 +820,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// Persist the background keep-alive toggle and apply it to live sessions.
-  /// A failed save reverts the switch and the in-memory setting: the toggle
-  /// must not show a state neither disk nor the running anchor is in.
+  /// A failed save reverts the switch and the in-memory setting — unless the
+  /// user toggled again while the save was in flight, in which case the newer
+  /// choice is authoritative and stands.
   Future<void> _persistKeepSessionsAlive(AppState state) async {
-    state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
+    final requested = _keepSessionsAlive;
+    state.services.settings.keepSessionsAliveInBackground = requested;
     try {
       await state.services.saveSettings();
-      state.setKeepSessionsAliveEnabled(_keepSessionsAlive);
+      state.setKeepSessionsAliveEnabled(requested);
     } catch (_) {
+      if (_keepSessionsAlive != requested) return;
       // Revert the field and the in-memory setting even if this screen is
       // gone by the time the save fails; only the rebuild is conditional.
-      _keepSessionsAlive = !_keepSessionsAlive;
+      _keepSessionsAlive = !requested;
       state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
       if (mounted) setState(() {});
     }

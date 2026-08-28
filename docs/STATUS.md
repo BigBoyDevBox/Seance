@@ -165,7 +165,9 @@ no .rpm/Flatpak — the AppImage covers non-Debian distros; it uses the system G
     by the CI matrix, but has not run on real
     hardware: battery impact, OEM task killers ignoring the FGS, the
     POST_NOTIFICATIONS ask, and the Android 15 six-hour `dataSync` timeout
-    path are all unexercised on a device.
+    path are all unexercised on a device. If store distribution ever happens,
+    revisit whether Play accepts `dataSync` for an indefinite session anchor
+    or whether `specialUse` (with its justification form) is the safer fit.
 
 ### Deliberately deferred (per proposal)
 Port-forwarding UI, ProxyJump execution (import only), Mosh,

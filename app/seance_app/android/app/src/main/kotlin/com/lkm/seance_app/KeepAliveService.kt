@@ -95,7 +95,7 @@ class KeepAliveService : Service() {
                 .setContentText(
                     "Keeping $sessionCount $sessions alive in the background."
                 )
-                .setSmallIcon(R.mipmap.ic_launcher)
+                .setSmallIcon(R.drawable.ic_stat_keep_alive)
                 // Tap → back into the app: the notification is the feature's
                 // most visible surface, and an untappable ongoing entry reads
                 // as broken.
