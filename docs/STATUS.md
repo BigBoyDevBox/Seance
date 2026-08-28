@@ -161,7 +161,8 @@ no .rpm/Flatpak — the AppImage covers non-Debian distros; it uses the system G
 13. **Android background keep-alive is CI-verified only.** The foreground-
     service anchor (`KeepAliveService`, driven by
     `services/background_keep_alive.dart` through the `seance/keepalive`
-    channel) is compiled by the client-build matrix but has not run on real
+    channel) is unit-tested (`background_keep_alive_test.dart`) and compiled
+    by the CI matrix, but has not run on real
     hardware: battery impact, OEM task killers ignoring the FGS, the
     POST_NOTIFICATIONS ask, and the Android 15 six-hour `dataSync` timeout
     path are all unexercised on a device.

@@ -828,8 +828,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await state.services.saveSettings();
       state.setKeepSessionsAliveEnabled(_keepSessionsAlive);
     } catch (_) {
-      setState(() => _keepSessionsAlive = !_keepSessionsAlive);
+      // Revert the field and the in-memory setting even if this screen is
+      // gone by the time the save fails; only the rebuild is conditional.
+      _keepSessionsAlive = !_keepSessionsAlive;
       state.services.settings.keepSessionsAliveInBackground = _keepSessionsAlive;
+      if (mounted) setState(() {});
     }
   }
 

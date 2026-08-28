@@ -1,7 +1,7 @@
 import 'dart:async' show Timer, unawaited;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/services.dart'
     show MethodChannel, MissingPluginException, PlatformException;
 
@@ -43,7 +43,9 @@ class MethodChannelBackgroundKeepAliveBackend
   Future<void> deactivate() => _invoke('deactivate');
 
   Future<void> _invoke(String method, [int? sessionCount]) async {
-    if (!Platform.isAndroid) return;
+    // kIsWeb first: dart:io's Platform has no implementation to consult (and
+    // throws) on a web build, and only Android has a channel to talk to.
+    if (kIsWeb || !Platform.isAndroid) return;
     try {
       await _channel.invokeMethod<void>(
         method,
