@@ -129,10 +129,15 @@ class BackgroundKeepAlive {
     final wasAnchored = _anchored;
     _anchored = true;
     _anchoredCount = count;
+    // The calls are unawaited, so a throwing backend would otherwise surface
+    // as an unhandled async error — anchoring is best-effort by contract.
     unawaited(
-      wasAnchored
-          ? _backend.sessionCountChanged(count)
-          : _backend.activate(count),
+      (wasAnchored
+              ? _backend.sessionCountChanged(count)
+              : _backend.activate(count))
+          .catchError((Object error) {
+        debugPrint('background keep-alive call failed: $error');
+      }),
     );
   }
 
@@ -142,6 +147,10 @@ class BackgroundKeepAlive {
     if (!_anchored) return;
     _anchored = false;
     _anchoredCount = 0;
-    unawaited(_backend.deactivate());
+    unawaited(
+      _backend.deactivate().catchError((Object error) {
+        debugPrint('background keep-alive deactivate failed: $error');
+      }),
+    );
   }
 }
