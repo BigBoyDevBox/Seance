@@ -137,7 +137,14 @@ class KeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val count = intent?.getIntExtra(EXTRA_SESSION_COUNT, 1) ?: 1
-        startForeground(NOTIFICATION_ID, notification(this, count))
+        try {
+            startForeground(NOTIFICATION_ID, notification(this, count))
+        } catch (error: Exception) {
+            // E.g. the Android 15 dataSync daily budget is already spent, or
+            // the start was disallowed: the anchor is best-effort, never
+            // worth crashing the process (and every live session) over.
+            stopSelf()
+        }
         // Not sticky: only the Dart side knows whether sessions are still
         // live; a service restarted without it would be a zombie anchor.
         return START_NOT_STICKY

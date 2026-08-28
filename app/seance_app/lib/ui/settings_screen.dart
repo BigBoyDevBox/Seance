@@ -828,6 +828,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     state.services.settings.keepSessionsAliveInBackground = requested;
     try {
       await state.services.saveSettings();
+      // A newer toggle may have landed while this save was in flight; its
+      // own persist owns the apply, and this stale one must not clobber it.
+      if (_keepSessionsAlive != requested) return;
       state.setKeepSessionsAliveEnabled(requested);
     } catch (_) {
       if (_keepSessionsAlive != requested) return;
