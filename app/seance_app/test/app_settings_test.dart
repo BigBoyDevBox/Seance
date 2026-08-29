@@ -21,6 +21,21 @@ void main() {
     expect(AppSettings.fromJson(json).checkForUpdates, isTrue);
   });
 
+  test('keepSessionsAliveInBackground defaults on and round-trips', () {
+    expect(AppSettings().keepSessionsAliveInBackground, isTrue);
+
+    final off = AppSettings(keepSessionsAliveInBackground: false);
+    final restored = AppSettings.fromJson(off.toJson());
+    expect(restored.keepSessionsAliveInBackground, isFalse);
+
+    // containsKey guards the removal: if the serialization key is ever
+    // renamed, this must fail instead of vacuously testing the default.
+    final json = AppSettings().toJson();
+    expect(json.containsKey('keepSessionsAliveInBackground'), isTrue);
+    json.remove('keepSessionsAliveInBackground');
+    expect(AppSettings.fromJson(json).keepSessionsAliveInBackground, isTrue);
+  });
+
   test('remote editor and path bookmarks round-trip safely', () {
     final settings = AppSettings(
       editorRegistry: EditorRegistry(

@@ -81,6 +81,13 @@ class AppSettings {
   /// never downloads or installs anything.
   bool checkForUpdates;
 
+  /// Keep SSH sessions alive while the app is backgrounded (Android: a
+  /// foreground-service anchor). On by default — without it, Android freezes
+  /// the cached process and every connection drops within moments of leaving
+  /// the screen. Device-local by design: it is a battery-life trade-off, not
+  /// an account property.
+  bool keepSessionsAliveInBackground;
+
   /// Built-in/system/custom editors for managed remote-file checkouts. Local
   /// only: installed applications and executable paths are never synced.
   EditorRegistry editorRegistry;
@@ -133,6 +140,7 @@ class AppSettings {
     this.autoSync = true,
     this.commandSuggestions = false,
     this.checkForUpdates = true,
+    this.keepSessionsAliveInBackground = true,
     EditorRegistry? editorRegistry,
     Map<String, List<String>>? remotePathBookmarks,
     Map<String, bool>? remoteShowHidden,
@@ -163,6 +171,7 @@ class AppSettings {
     'autoSync': autoSync,
     'commandSuggestions': commandSuggestions,
     'checkForUpdates': checkForUpdates,
+    'keepSessionsAliveInBackground': keepSessionsAliveInBackground,
     'editorRegistry': editorRegistry.toJson(),
     // Keep old versions on a safe supported default if settings are downgraded.
     'remoteFileEditor':
@@ -201,6 +210,8 @@ class AppSettings {
     autoSync: json['autoSync'] as bool? ?? true,
     commandSuggestions: json['commandSuggestions'] as bool? ?? false,
     checkForUpdates: json['checkForUpdates'] as bool? ?? true,
+    keepSessionsAliveInBackground:
+        json['keepSessionsAliveInBackground'] as bool? ?? true,
     editorRegistry: EditorRegistry.fromJson(
       json['editorRegistry'],
       legacyEditor: json['remoteFileEditor'],
