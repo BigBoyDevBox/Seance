@@ -11,7 +11,11 @@ Séance session touching these areas knows a second consumer exists.
 
 ## How Poltergeist consumes Séance
 
-- **Git-pinned dependencies, never forks:** `seance_protocol` and
+- **Git-pinned dependencies, never forks** (pinning is deliberately not
+  gated on PR-S0: both repos share one owner, so consuming the
+  un-licensed packages is the rights holder's own call — the LICENSE is
+  what the copy-with-attribution path and any downstream user need):
+  `seance_protocol` and
   `seance_core` (records/crypto/DTOs, `SyncEngine`/`HttpSyncClient`/
   `LocalRecordStore`, `RemoteFileSystem` + adapter, `TofuVerifier`, stores,
   ssh_config import, probe service). The pin is a Séance tag, bumped as a
@@ -58,7 +62,12 @@ as locked. Nothing server-side enforces this gate (bookmark sync
 deliberately needs no protocol-version change, and the server cannot see
 record kinds), so unlocking shared mode is a **user-asserted switch**: the
 setup flow must ask the user to confirm every device on the account runs a
-PR-S1-era build before the first `bookmark:` record is written.
+PR-S1-era build before the first `bookmark:` record is written. That
+assertion only covers devices present at unlock: a pre-PR-S1 build that
+joins the account later (or a device rolled back to one) still hits #53's
+failure mode — `bookmark:` records decoded as a phantom `serverConfig` —
+so the setup copy must say the account stays unsafe for old builds
+*permanently after* unlocking, not only at the moment of the switch.
 
 ## What flows back
 
@@ -79,7 +88,13 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   devices already exchange. Shared-account mode therefore extends TOFU
   trust to every app on the account: a synced pin that conflicts with a
   locally known key must surface a user-visible warning (treated as a
-  possible MITM), never a silent overwrite.
+  possible MITM), never a silent overwrite — and the conflicting incoming
+  pin is **quarantined at the application layer**: held unapplied to the
+  local TOFU store until the user resolves the warning. The record store
+  itself still merges by LWW (the wire behavior stays untouched, per the
+  never-touch list above); what is gated is applying the synced key as
+  trusted — otherwise a newer LWW tuple from a compromised device would
+  replace the locally trusted key and the warning would be cosmetic.
 - Poltergeist writes only `bookmark:` and `hostkey:` records; it never
   edits `serverConfig`/`secret`/`snippet` records and never exposes
   `DELETE /v1/account` in shared mode (that endpoint nukes both apps'
