@@ -23,8 +23,10 @@ Séance session touching these areas knows a second consumer exists.
   (verified at this writing: every author and co-author identity in
   `git shortlog -sne --group=author --group=trailer:Co-authored-by` is
   either the owner's own accounts and machines or the owner's own
-  AI-assistant sessions — tools the owner operates, whose output the
-  owner holds; no external human contributor appears. History cannot
+  AI-assistant sessions — tools the owner operates; ownership of their
+  output is moot for this purpose, since what the rationale needs is
+  only that no external human contributor appears — and none does.
+  History cannot
   reveal a squash-merged external contribution, which is one reason
   PR-S0 still re-verifies manually). PR-S0
   re-verifies sole authorship, or collects contributor sign-off, before
@@ -88,7 +90,13 @@ Séance round through either door — keep both properties when touching
 this code. Include a regression test pinning that a sealed record's
 serialized envelope carries no kind string (the narrower "kinds never
 leave the sealed envelope" invariant above — the id prefix stays
-server-visible, as already noted).
+server-visible, as already noted) — and a second pinning the preserve
+path itself: a preserved unknown-kind record's id, sealed blob, and
+LWW tuple survive an apply round **byte-identical** (blob bytes
+compared, not decoded equality), with push emitting nothing for it —
+the "never re-sealed, never re-pushed" rule above, which a naive
+implementation breaks invisibly until a later build tries to learn the
+kind.
 
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server
@@ -143,12 +151,15 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
 - In shared-account mode Poltergeist reads `serverConfig` records
   **read-only** (the user's Séance servers appear as ready-made bookmark
   sources) — and **endpoint-pinned**: each Poltergeist device records
-  the endpoint it bookmarked, so a Séance-side edit that changes a
-  server's host/port/username costs a one-time confirmation on each
-  Poltergeist device before it connects to the new endpoint (otherwise
-  one compromised device could LWW-rewrite a server record and redirect
-  bookmarks to a credential-collecting host that no pin conflict would
-  ever flag) — and syncs host-key pins bidirectionally as standard
+  the endpoint it bookmarked, and the check is **connect-time and
+  record-agnostic** — connecting to any endpoint that differs from the
+  recorded one costs a one-time confirmation on that device, whether
+  the change arrived through a Séance-side `serverConfig` edit or a
+  rewritten `bookmark:` record (Poltergeist devices legitimately write
+  that kind, so a compromised one could LWW-rewrite either record and
+  redirect a connection to a credential-collecting host that no pin
+  conflict would ever flag) — and syncs host-key pins bidirectionally
+  as standard
   `hostkey:<host:port>` records — the same trust the user's other Séance
   devices already exchange. Shared-account mode therefore extends TOFU
   trust to every app on the account — **including first-seen keys**:
