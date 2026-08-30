@@ -69,7 +69,7 @@ PR-S1 regression test pins.
 | Id | Change | Why |
 |---|---|---|
 | PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist — under it the PORTS.md attribution ledger is deliberately an engineering-provenance convention, not a license term; MIT for both repos would be the pick if attribution ever needed to be enforceable) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
-| PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account |
+| PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account — recommended: land the [#56](https://github.com/L-K-M/Seance/issues/56) fix in the same minimum release, so one version assertion covers both axes (see "Cover pin trust too" below) |
 | PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
 | PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole **uint32** seconds — consumers must round or tolerance-compare mtimes, never compare exactly, and clamp out-of-range values to the 1970–2106 window before setstat rather than letting them wrap), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
 | PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own deferred backlog item (ssh-agent auth / ProxyJump — see STATUS.md, named rather than numbered so reordering the backlog cannot rot this pointer) — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
@@ -106,26 +106,31 @@ treatment as an unknown kind: stranded rather than lost until a build
 that can decode it arrives (the stranding/no-refetch discussion above
 covers it identically), never silently dropped behind the advanced
 cursor and never uselessly refetched. Keep all of these properties when
-touching this code. Include a regression test pinning that a sealed record's
-serialized envelope carries no kind string (the narrower "kinds never
-leave the sealed envelope" invariant above — the id prefix stays
-server-visible, as already noted) — and a second pinning the preserve
-path itself: a preserved unknown-kind record's id, sealed blob, and
-LWW tuple survive an apply round **byte-identical** (blob bytes
-compared, not decoded equality), with push emitting nothing for it —
-the "never re-sealed, never re-pushed" rule above, which a naive
-implementation breaks invisibly until a later build tries to learn the
-kind. And a third pinning the cursor: after a round that preserves an
-unknown-kind record, the pull high-water mark has advanced past it, so
-an immediate second round fetches nothing for that id — the no-refetch
-property every persistent store built on this path leans on, and the
-only one of the three an apply-only cursor advance would break while
-passing the other two tests. And a fourth pinning the upgrade path end
-to end: a store holding a preserved unknown-kind record, re-opened by
-a build whose known-kind set now includes that kind, applies the
-record through the startup rescan above with **no pull involved** (the
-harness delivers nothing) — because no pull will ever deliver it
-again. All four tests run against a store and
+touching this code. Regression tests, one per invariant:
+
+1. **No kind on the wire** — a sealed record's serialized envelope
+   carries no kind string (the narrower "kinds never leave the sealed
+   envelope" invariant above — the id prefix stays server-visible, as
+   already noted).
+2. **Preserve is lossless** — a preserved unknown-kind record's id,
+   sealed blob, and LWW tuple survive an apply round **byte-identical**
+   (blob bytes compared, not decoded equality), with push emitting
+   nothing for it — the "never re-sealed, never re-pushed" rule above,
+   which a naive implementation breaks invisibly until a later build
+   tries to learn the kind.
+3. **The cursor advances** — after a round that preserves an
+   unknown-kind record, the pull high-water mark has advanced past it,
+   so an immediate second round fetches nothing for that id — the
+   no-refetch property every persistent store built on this path leans
+   on, and the only one of tests 1–3 an apply-only cursor advance would
+   break while passing the other two.
+4. **The upgrade path works end to end** — a store holding a preserved
+   unknown-kind record, re-opened by a build whose known-kind set now
+   includes that kind, applies the record through the startup rescan
+   above with **no pull involved** (the harness delivers nothing) —
+   because no pull will ever deliver it again.
+
+All four tests run against a store and
 cursor that persist across rounds — a test double at PR-S1 time, since
 present-day Séance rebuilds its store per round (high-water mark
 restarting at zero) and the cursor test is unimplementable against that

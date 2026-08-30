@@ -189,14 +189,14 @@ release).
   upstream asks (forward-compatible record kinds being the important one) —
   see [docs/POLTERGEIST.md](POLTERGEIST.md). Three of the gaps it documents
   are live Séance bugs tracked on their own, not just as Poltergeist asks:
-  unknown record kinds decoding as `serverConfig`
-  ([#53](https://github.com/L-K-M/Seance/issues/53)), deletes never
-  writing tombstones, so deleted servers resurrect on the next pull —
-  every pull is effectively full, since the app rebuilds its record
-  store per round
-  ([#54](https://github.com/L-K-M/Seance/issues/54)), and pulled hostkey
-  pins silently overwriting a conflicting local pin
-  ([#56](https://github.com/L-K-M/Seance/issues/56)).
+  - unknown record kinds decoding as `serverConfig`
+    ([#53](https://github.com/L-K-M/Seance/issues/53));
+  - deletes never writing tombstones, so deleted servers resurrect on
+    the next pull — and every pull is effectively full, since the app
+    rebuilds its record store per round
+    ([#54](https://github.com/L-K-M/Seance/issues/54));
+  - pulled hostkey pins silently overwriting a conflicting local pin
+    ([#56](https://github.com/L-K-M/Seance/issues/56)).
 - Release/build/deploy tooling is in place and aligned with the sibling repos:
   `scripts/release.sh` (pubspec-lockstep bump + `v*` tag →
   `.github/workflows/release.yml` publishes the server binaries, the GHCR image,
