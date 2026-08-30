@@ -22,21 +22,21 @@ same change.
 
   Pinning is deliberately not gated on PR-S0: both repos share one owner,
   so consuming the unlicensed packages is the rights holder's own call —
-  a rationale that holds only while Séance has no external contributions
-  (verified 2026-08-30 at `main` commit `0d0049a`, via
-  `git shortlog -sne --group=author --group=trailer:Co-authored-by` —
-  the dated, diffable baseline PR-S0's re-verification compares
-  against: every author and co-author identity is
-  either the owner's own accounts and machines or the owner's own
-  AI-assistant sessions — tools the owner operates; ownership of their
-  output is moot for this purpose, since what the rationale needs is
-  only that no external human contributor appears — and none does.
-  History cannot
-  reveal a squash-merged external contribution, which is one reason
-  PR-S0 still re-verifies manually). PR-S0
-  re-verifies sole authorship, or collects contributor sign-off, before
-  the license is chosen; the LICENSE is what the copy-with-attribution
-  path and any downstream user need.
+  a rationale that holds only while Séance has no external
+  contributions. Re-verification baseline — diff your run against this:
+
+  ```
+  # verified 2026-08-30 at main commit 0d0049a
+  git shortlog -sne --group=author --group=trailer:Co-authored-by
+  ```
+
+  At that baseline, every author and co-author identity is the owner's
+  own account, machine, or AI-assistant session; ownership of assistant
+  output is moot here — the rationale needs only that no external human
+  contributor appears, and none does. A squash merge could hide one,
+  which is why PR-S0 re-verifies manually (or collects contributor
+  sign-off) before the license is chosen; the LICENSE is what the
+  copy-with-attribution path and any downstream user need.
 - **Copy-with-attribution** for app-layer assets that live outside the pure
   packages (managed-checkout pipeline, atomic-file helpers, the built-in
   editor stack, toasts, `MiddleEllipsisText`, adaptive layout math, the
@@ -91,8 +91,13 @@ model. Séance's apply path never decodes bookmark payloads at all
 (`case bookmark: break;` — there is no bookmark store), and the
 per-record try/catch additionally fail-softs a malformed payload of
 *any* known kind, so a future Poltergeist schema change cannot brick a
-Séance round through either door — keep both properties when touching
-this code. Include a regression test pinning that a sealed record's
+Séance round through either door — and a malformed known-kind record
+gets the same skip-and-preserve, cursor-advance, never-re-push
+treatment as an unknown kind: stranded rather than lost until a build
+that can decode it arrives (the stranding/no-refetch discussion above
+covers it identically), never silently dropped behind the advanced
+cursor and never uselessly refetched. Keep all of these properties when
+touching this code. Include a regression test pinning that a sealed record's
 serialized envelope carries no kind string (the narrower "kinds never
 leave the sealed envelope" invariant above — the id prefix stays
 server-visible, as already noted) — and a second pinning the preserve
@@ -106,7 +111,12 @@ unknown-kind record, the pull high-water mark has advanced past it, so
 an immediate second round fetches nothing for that id — the no-refetch
 property every persistent store built on this path leans on, and the
 only one of the three an apply-only cursor advance would break while
-passing the other two tests.
+passing the other two tests. All three tests run against a store and
+cursor that persist across rounds — a test double at PR-S1 time, since
+present-day Séance rebuilds its store per round (high-water mark
+restarting at zero) and the cursor test is unimplementable against that
+architecture as-is; the double's shape should match the
+persistent-store flow-back so the tests survive it unchanged.
 
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server
@@ -173,7 +183,10 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   confirming *replaces* the recorded endpoint, never adds to an
   allowlist, so flip-flopping between two previously confirmed
   endpoints re-triggers the check every time and cannot redirect
-  silently — whether
+  silently; and the dialog shows the recorded endpoint beside the new
+  one (old → new, plus which record kind delivered the change) — a
+  generic prompt indistinguishable from first-connect TOFU would train
+  exactly the click-through an attacker needs — whether
   the change arrived through a Séance-side `serverConfig` edit or a
   rewritten `bookmark:` record (Poltergeist devices legitimately write
   that kind, so a compromised one could LWW-rewrite either record and
