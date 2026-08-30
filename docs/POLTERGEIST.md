@@ -31,8 +31,16 @@ Séance session touching these areas knows a second consumer exists.
   envelope, and the "UI never sees dartssh2 types" boundary.
 
 Bookmark backup rides the **existing sync server unchanged**: a new
-`bookmark` record kind travels inside the encrypted payload, which the
-server cannot see — no endpoint, schema, or protocol-version change.
+`bookmark` record kind travels inside the encrypted payload — no
+endpoint, schema, or protocol-version change, because kind is not a
+field of the server's record schema at all. Precision on what the
+server *does* see: record **ids** follow Séance's existing kind-prefix
+convention (`sync_coordinator.dart` writes `hostkey:<host:port>` today;
+bookmarks follow as `bookmark:<uuid>`), so the id prefix — and, for
+pins, the host:port inside it — is plaintext on the server, the same
+accepted privacy nit Séance already carries. The *sealed envelope*
+carries no kind string; that narrower claim is what the PR-S1 regression
+test pins.
 
 ## Upstream asks (sequenced; each is small and self-contained)
 
@@ -67,35 +75,40 @@ invariant above).
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server
 (works against unmodified Séance today) and treats the shared-account mode
-as locked. Nothing server-side enforces this gate (bookmark sync
-deliberately needs no protocol-version change, and the server cannot see
-record kinds), so unlocking shared mode is a **user-asserted switch**: the
-setup flow must ask the user to confirm every device on the account runs a
-PR-S1-era build before the first `bookmark:` record is written. PR-S1
-gates *record integrity* (#53); pin **trust** is a second axis: with
-[#56](https://github.com/L-K-M/Seance/issues/56) unfixed, Séance devices
-auto-apply synced pins — a pre-existing behavior among Séance's own
-devices, which is why it is not a second hard gate — so the recommended
-path is landing the #56 fix in the **same minimum release** as PR-S1, so
-the one version assertion covers both axes; if the minimum release does
-not carry it, the setup copy must disclose that Séance devices will
-trust pins Poltergeist (or any device) pushes, without a conflict
-warning. That
-assertion only covers devices present at unlock: a pre-PR-S1 build that
-joins the account later (or a device rolled back to one) still hits #53's
-failure mode — `bookmark:` records decoded as a phantom `serverConfig` —
-so the setup copy must say the account stays unsafe for old builds
-*permanently after* unlocking, not only at the moment of the switch.
-Separate-account mode carries the same exposure through one manual path —
-signing an old Séance build into the Poltergeist-owned account — and its
-setup copy warns against that too.
+as locked. Nothing server-side enforces this gate (kind is not in the
+server's schema — it cannot police what it does not model), so unlocking
+shared mode is a **user-asserted switch**. The normative requirements on
+Poltergeist's setup flow, one per bullet:
+
+- **Ask before the first write:** the user confirms every device on the
+  account runs a PR-S1-era build before the first `bookmark:` record is
+  written.
+- **Cover pin trust too:** PR-S1 gates *record integrity* (#53); pin
+  trust is a second axis. With
+  [#56](https://github.com/L-K-M/Seance/issues/56) unfixed, Séance
+  devices auto-apply synced pins — pre-existing behavior among Séance's
+  own devices, which is why it is not a second hard gate. Recommended:
+  land the #56 fix in the **same minimum release** as PR-S1 so one
+  version assertion covers both axes; if the minimum release lacks it,
+  the setup copy must disclose that Séance devices will trust pushed
+  pins without a conflict warning.
+- **State the permanence:** the assertion covers devices present at
+  unlock only — a pre-PR-S1 build that joins later (or a device rolled
+  back to one) still decodes `bookmark:` records as a phantom
+  `serverConfig` (#53) — so the copy says the account stays unsafe for
+  old builds *permanently after* unlocking, not only at the switch.
+- **Warn in separate mode too:** the same exposure exists through one
+  manual path — signing an old Séance build into the Poltergeist-owned
+  account — and separate-account setup copy warns against it.
 
 ## What flows back
 
 Poltergeist's plan commits to porting improvements back rather than
 forking: the persistent local record store with real tombstones (fixes the
 delete-resurrection gap — today nothing in Séance ever writes a tombstone,
-so a deleted server resurrects on the next full pull; when tombstones
+so a deleted server resurrects on the next pull, and every Séance pull
+is effectively full: the app rebuilds its in-memory record store each
+round, so the high-water mark restarts at zero; when tombstones
 land, applying one must remove the record regardless of kind
 decodability — preserved unknown-kind records included — or a deleted
 bookmark resurrects on any device that later learns the kind, a
