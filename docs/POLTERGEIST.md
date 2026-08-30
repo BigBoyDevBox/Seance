@@ -20,8 +20,13 @@ Séance session touching these areas knows a second consumer exists.
   Pinning is deliberately not gated on PR-S0: both repos share one owner,
   so consuming the unlicensed packages is the rights holder's own call —
   a rationale that holds only while Séance has no external contributions
-  (verified at this writing: every committer identity in
-  `git shortlog -sne` is the owner's own accounts and machines). PR-S0
+  (verified at this writing: every author and co-author identity in
+  `git shortlog -sne --group=author --group=trailer:Co-authored-by` is
+  either the owner's own accounts and machines or the owner's own
+  AI-assistant sessions — tools the owner operates, whose output the
+  owner holds; no external human contributor appears. History cannot
+  reveal a squash-merged external contribution, which is one reason
+  PR-S0 still re-verifies manually). PR-S0
   re-verifies sole authorship, or collects contributor sign-off, before
   the license is chosen; the LICENSE is what the copy-with-attribution
   path and any downstream user need.
@@ -43,9 +48,11 @@ server *does* see: record **ids** follow Séance's existing kind-prefix
 convention (`sync_coordinator.dart` writes `hostkey:<host:port>` today;
 bookmarks follow as `bookmark:<uuid>`), so the id prefix — and, for
 pins, the host:port inside it — is plaintext on the server, the same
-accepted privacy nit Séance already carries. The *sealed envelope*
-carries no kind string; that narrower claim is what the PR-S1 regression
-test pins.
+accepted privacy nit Séance already carries. The *serialized envelope* —
+the wire form `{id, updatedAt, deviceId, deleted, seq?, blob}` that
+wraps the sealed blob — carries no kind string; the kind name itself
+travels only inside the sealed blob. That narrower claim is what the
+PR-S1 regression test pins.
 
 ## Upstream asks (sequenced; each is small and self-contained)
 
