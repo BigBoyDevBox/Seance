@@ -71,7 +71,16 @@ as locked. Nothing server-side enforces this gate (bookmark sync
 deliberately needs no protocol-version change, and the server cannot see
 record kinds), so unlocking shared mode is a **user-asserted switch**: the
 setup flow must ask the user to confirm every device on the account runs a
-PR-S1-era build before the first `bookmark:` record is written. That
+PR-S1-era build before the first `bookmark:` record is written. PR-S1
+gates *record integrity* (#53); pin **trust** is a second axis: with
+[#56](https://github.com/L-K-M/Seance/issues/56) unfixed, Séance devices
+auto-apply synced pins — a pre-existing behavior among Séance's own
+devices, which is why it is not a second hard gate — so the recommended
+path is landing the #56 fix in the **same minimum release** as PR-S1, so
+the one version assertion covers both axes; if the minimum release does
+not carry it, the setup copy must disclose that Séance devices will
+trust pins Poltergeist (or any device) pushes, without a conflict
+warning. That
 assertion only covers devices present at unlock: a pre-PR-S1 build that
 joins the account later (or a device rolled back to one) still hits #53's
 failure mode — `bookmark:` records decoded as a phantom `serverConfig` —
