@@ -35,10 +35,21 @@ server cannot see — no endpoint, schema, or protocol-version change.
 | Id | Change | Why |
 |---|---|---|
 | PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
-| PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`; change `recordKindFromName`'s `orElse` from `serverConfig` to `unknown`; skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores` with a per-record try/catch — preserved records keep their original sealed blobs and kind strings (never re-sealed under a lossy `unknown` name, never re-pushed) and the pull high-water mark still advances past them so they aren't re-fetched every round; add the `bookmark` kind + `Bookmark` model; include a regression test pinning that a sealed record's serialized envelope carries no kind string (the "server cannot see kinds" invariant above) | Today an unknown kind decodes as `serverConfig`: a pulled `bookmark` record either throws in `ServerConfig.fromJson` (bricking every subsequent sync round on the old client) or — worse — half-parses into a **phantom server** that the old client then re-seals and pushes as first-class data. This is a real forward-compat bug independent of Poltergeist; it is also the hard gate before the two apps may share a sync account |
+| PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account |
 | PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
-| PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole seconds — consumers must round or tolerance-compare mtimes, never compare exactly), `setOwner` (chown/chgrp), an optional per-call hashing flag, ranged read | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
+| PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole seconds — consumers must round or tolerance-compare mtimes, never compare exactly), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
 | PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own STATUS.md item #1 and a deliberately deferred item — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
+
+**PR-S1 detail** (the table row's full spec): change
+`recordKindFromName`'s `orElse` from `serverConfig` to `unknown`, and
+skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores` with a
+per-record try/catch. Preserved records keep their original sealed blobs
+and kind strings — never re-sealed under a lossy `unknown` name, never
+re-pushed — and the pull high-water mark still advances past them so they
+aren't re-fetched every round. Add the `bookmark` kind + `Bookmark`
+model, and include a regression test pinning that a sealed record's
+serialized envelope carries no kind string (the "server cannot see kinds"
+invariant above).
 
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server

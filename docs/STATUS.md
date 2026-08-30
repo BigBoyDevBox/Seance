@@ -185,7 +185,7 @@ release).
 - ~~The GitHub repository is still named `Ghossht`~~ — renamed; the remote is
   `L-K-M/Seance` now.
 - **Poltergeist**, the sibling two-pane SFTP app, consumes `seance_protocol`
-  + `seance_core` as pinned dependencies and has a short queue of small
+  and `seance_core` as pinned dependencies, with a short queue of small
   upstream asks (forward-compatible record kinds being the important one) —
   see [docs/POLTERGEIST.md](POLTERGEIST.md). Two of the gaps it documents
   are live Séance bugs tracked on their own, not just as Poltergeist asks:
