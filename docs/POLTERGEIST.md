@@ -8,6 +8,9 @@ sync, and editor foundations. Its full design plan lives in
 this file records the Séance-facing part: what Poltergeist consumes, the
 small upstream changes it needs, and the porting-back arrangement — so a
 Séance session touching these areas knows a second consumer exists.
+Poltergeist's `docs/plan/` stays canonical for Poltergeist-side
+behavior; if the two ever disagree, this file is the one to fix, in the
+same change.
 
 ## How Poltergeist consumes Séance
 
@@ -20,8 +23,10 @@ Séance session touching these areas knows a second consumer exists.
   Pinning is deliberately not gated on PR-S0: both repos share one owner,
   so consuming the unlicensed packages is the rights holder's own call —
   a rationale that holds only while Séance has no external contributions
-  (verified at this writing: every author and co-author identity in
-  `git shortlog -sne --group=author --group=trailer:Co-authored-by` is
+  (verified 2026-08-30 at `main` commit `0d0049a`, via
+  `git shortlog -sne --group=author --group=trailer:Co-authored-by` —
+  the dated, diffable baseline PR-S0's re-verification compares
+  against: every author and co-author identity is
   either the owner's own accounts and machines or the owner's own
   AI-assistant sessions — tools the owner operates; ownership of their
   output is moot for this purpose, since what the rationale needs is
@@ -64,7 +69,7 @@ PR-S1 regression test pins.
 | PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account |
 | PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
 | PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole **uint32** seconds — consumers must round or tolerance-compare mtimes, never compare exactly, and clamp out-of-range values to the 1970–2106 window before setstat rather than letting them wrap), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
-| PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own STATUS.md item #1 and a deliberately deferred item — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
+| PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own deferred backlog item (ssh-agent auth / ProxyJump — see STATUS.md, named rather than numbered so reordering the backlog cannot rot this pointer) — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
 
 **PR-S1 detail** (the table row's full spec): change
 `recordKindFromName`'s `orElse` from `serverConfig` to `unknown`, and
