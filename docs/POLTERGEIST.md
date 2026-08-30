@@ -50,8 +50,17 @@ skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores` with a
 per-record try/catch. Preserved records keep their original sealed blobs
 and kind strings — never re-sealed under a lossy `unknown` name, never
 re-pushed — and the pull high-water mark still advances past them so they
-aren't re-fetched every round. Add the `bookmark` kind + `Bookmark`
-model, and include a regression test pinning that a sealed record's
+aren't re-fetched every round (which strands them if a later build learns
+the kind: a build whose known-kind set grew must re-scan the **local**
+store to apply previously preserved records — the pull will never deliver
+them again; a fresh store recovers them on its first full pull). Add the
+`bookmark` kind + `Bookmark`
+model. Séance's apply path never decodes bookmark payloads at all
+(`case bookmark: break;` — there is no bookmark store), and the
+per-record try/catch additionally fail-softs a malformed payload of
+*any* known kind, so a future Poltergeist schema change cannot brick a
+Séance round through either door — keep both properties when touching
+this code. Include a regression test pinning that a sealed record's
 serialized envelope carries no kind string (the "server cannot see kinds"
 invariant above).
 
@@ -68,13 +77,21 @@ joins the account later (or a device rolled back to one) still hits #53's
 failure mode — `bookmark:` records decoded as a phantom `serverConfig` —
 so the setup copy must say the account stays unsafe for old builds
 *permanently after* unlocking, not only at the moment of the switch.
+Separate-account mode carries the same exposure through one manual path —
+signing an old Séance build into the Poltergeist-owned account — and its
+setup copy warns against that too.
 
 ## What flows back
 
 Poltergeist's plan commits to porting improvements back rather than
 forking: the persistent local record store with real tombstones (fixes the
 delete-resurrection gap — today nothing in Séance ever writes a tombstone,
-so a deleted server resurrects on the next full pull), theme-aware status
+so a deleted server resurrects on the next full pull; when tombstones
+land, applying one must remove the record regardless of kind
+decodability — preserved unknown-kind records included — or a deleted
+bookmark resurrects on any device that later learns the kind, a
+preserved-record variant of [#54](https://github.com/L-K-M/Seance/issues/54)),
+theme-aware status
 colors, staged responsive collapse, keyboard/command-registry patterns, and
 any bug fix made in a ported file. The `PORTS.md` ledger on the Poltergeist
 side is the tracking mechanism; nothing in that flow blocks Séance work.
@@ -95,6 +112,16 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   never-touch list above); what is gated is applying the synced key as
   trusted — otherwise a newer LWW tuple from a compromised device would
   replace the locally trusted key and the warning would be cosmetic.
+  Resolution semantics: **keep local** re-pushes the kept pin under a
+  newer LWW tuple, so the user's trust decision becomes canonical and
+  the conflict disarms fleet-wide instead of re-firing on every other
+  device (and re-arming here); **accept synced** applies the quarantined
+  key. And the protection is only as wide as its weakest device: Séance
+  itself currently applies pulled pins unconditionally
+  (`sync_coordinator.dart` — filed as
+  [#56](https://github.com/L-K-M/Seance/issues/56)), so until that lands,
+  shared mode silently overwrites trust on Séance devices even while
+  Poltergeist quarantines.
 - Poltergeist writes only `bookmark:` and `hostkey:` records; it never
   edits `serverConfig`/`secret`/`snippet` records and never exposes
   `DELETE /v1/account` in shared mode (that endpoint nukes both apps'
