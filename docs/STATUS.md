@@ -184,6 +184,10 @@ release).
 ## Housekeeping
 - ~~The GitHub repository is still named `Ghossht`~~ — renamed; the remote is
   `L-K-M/Seance` now.
+- **Poltergeist**, the sibling two-pane SFTP app, consumes `seance_protocol`
+  + `seance_core` as pinned dependencies and has a short queue of small
+  upstream asks (forward-compatible record kinds being the important one) —
+  see [docs/POLTERGEIST.md](POLTERGEIST.md).
 - Release/build/deploy tooling is in place and aligned with the sibling repos:
   `scripts/release.sh` (pubspec-lockstep bump + `v*` tag →
   `.github/workflows/release.yml` publishes the server binaries, the GHCR image,
