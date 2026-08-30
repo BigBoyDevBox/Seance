@@ -13,7 +13,12 @@ Séance session touching these areas knows a second consumer exists.
 
 - **Git-pinned dependencies, never forks** (pinning is deliberately not
   gated on PR-S0: both repos share one owner, so consuming the
-  un-licensed packages is the rights holder's own call — the LICENSE is
+  un-licensed packages is the rights holder's own call — a rationale
+  that holds only while Séance has no external contributions (verified
+  at this writing: every committer identity in `git shortlog -sne` is
+  the owner's own accounts and machines); PR-S0 re-verifies sole
+  authorship, or collects contributor sign-off, before the license is
+  chosen. The LICENSE is
   what the copy-with-attribution path and any downstream user need):
   `seance_protocol` and
   `seance_core` (records/crypto/DTOs, `SyncEngine`/`HttpSyncClient`/
@@ -97,7 +102,9 @@ Poltergeist's setup flow, one per bullet:
   land the #56 fix in the **same minimum release** as PR-S1 so one
   version assertion covers both axes; if the minimum release lacks it,
   the setup copy must disclose that Séance devices will trust pushed
-  pins without a conflict warning.
+  pins without a conflict warning — and this axis carries the same
+  permanence caveat as PR-S1's: a pre-#56 build that joins the account
+  later (or is rolled back) silently overwrites pins again.
 - **State the permanence:** the assertion covers devices present at
   unlock only — a pre-PR-S1 build that joins later (or a device rolled
   back to one) still decodes `bookmark:` records as a phantom
@@ -131,7 +138,13 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   sources) and syncs host-key pins bidirectionally as standard
   `hostkey:<host:port>` records — the same trust the user's other Séance
   devices already exchange. Shared-account mode therefore extends TOFU
-  trust to every app on the account: a synced pin that conflicts with a
+  trust to every app on the account — **including first-seen keys**:
+  where a device holds no local pin to conflict with, a synced pin is
+  applied as trusted with no warning (that silent propagation *is* the
+  multi-device pin-sync feature), which means one compromised device on
+  the account can mint trust for hosts the fleet has never seen — a
+  residual risk the shared-mode setup copy must disclose, quarantine or
+  no quarantine. A synced pin that conflicts with a
   locally known key must surface a user-visible warning (treated as a
   possible MITM), never a silent overwrite — and the conflicting incoming
   pin is **quarantined at the application layer**: held unapplied to the
