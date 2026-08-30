@@ -46,7 +46,7 @@ test pins.
 
 | Id | Change | Why |
 |---|---|---|
-| PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
+| PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist — under it the PORTS.md attribution ledger is deliberately an engineering-provenance convention, not a license term; MIT for both repos would be the pick if attribution ever needed to be enforceable) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
 | PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account |
 | PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
 | PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole seconds — consumers must round or tolerance-compare mtimes, never compare exactly), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
@@ -58,10 +58,15 @@ skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores` with a
 per-record try/catch. Preserved records keep their original sealed blobs
 and kind strings — never re-sealed under a lossy `unknown` name, never
 re-pushed — and the pull high-water mark still advances past them so they
-aren't re-fetched every round (which strands them if a later build learns
-the kind: a build whose known-kind set grew must re-scan the **local**
-store to apply previously preserved records — the pull will never deliver
-them again; a fresh store recovers them on its first full pull). Add the
+aren't re-fetched every round. That no-refetch property (and its
+stranding flip side) only bites once the record store **persists across
+rounds** — Poltergeist's store today, Séance's after the
+persistent-store flow-back; present-day Séance rebuilds its in-memory
+store per round, so every pull harmlessly re-delivers preserved records
+(see "What flows back"). With a persistent store, a build whose
+known-kind set grew must re-scan the **local** store to apply previously
+preserved records — the pull will never deliver them again; a fresh
+store recovers them on its first full pull. Add the
 `bookmark` kind + `Bookmark`
 model. Séance's apply path never decodes bookmark payloads at all
 (`case bookmark: break;` — there is no bookmark store), and the
@@ -69,8 +74,9 @@ per-record try/catch additionally fail-softs a malformed payload of
 *any* known kind, so a future Poltergeist schema change cannot brick a
 Séance round through either door — keep both properties when touching
 this code. Include a regression test pinning that a sealed record's
-serialized envelope carries no kind string (the "server cannot see kinds"
-invariant above).
+serialized envelope carries no kind string (the narrower "kinds never
+leave the sealed envelope" invariant above — the id prefix stays
+server-visible, as already noted).
 
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server
