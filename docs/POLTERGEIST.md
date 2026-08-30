@@ -135,7 +135,13 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
 
 - In shared-account mode Poltergeist reads `serverConfig` records
   **read-only** (the user's Séance servers appear as ready-made bookmark
-  sources) and syncs host-key pins bidirectionally as standard
+  sources) — and **endpoint-pinned**: each Poltergeist device records
+  the endpoint it bookmarked, so a Séance-side edit that changes a
+  server's host/port/username costs a one-time confirmation on each
+  Poltergeist device before it connects to the new endpoint (otherwise
+  one compromised device could LWW-rewrite a server record and redirect
+  bookmarks to a credential-collecting host that no pin conflict would
+  ever flag) — and syncs host-key pins bidirectionally as standard
   `hostkey:<host:port>` records — the same trust the user's other Séance
   devices already exchange. Shared-account mode therefore extends TOFU
   trust to every app on the account — **including first-seen keys**:
