@@ -23,7 +23,10 @@ same change.
   Pinning is deliberately not gated on PR-S0: both repos share one owner,
   so consuming the unlicensed packages is the rights holder's own call —
   a rationale that holds only while Séance has no external
-  contributions. Re-verification baseline — diff your run against this:
+  contributions. Re-verification: re-run the command below and check
+  every author and co-author identity against the baseline note that
+  follows it (the block records the command and its run date; the
+  expected-identities claim is the prose):
 
   ```
   # verified 2026-08-30 at main commit 0d0049a
@@ -201,7 +204,15 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   multi-device pin-sync feature), which means one compromised device on
   the account can mint trust for hosts the fleet has never seen — a
   residual risk the shared-mode setup copy must disclose, quarantine or
-  no quarantine. The inverse path is specified too: removing a locally
+  no quarantine — alongside the broadest exposure underneath all of
+  this: any app signed into the shared account derives the account key
+  and **can decrypt every synced record**, `secret` records (stored
+  credentials) included, not only the kinds it writes. Poltergeist's
+  never-decrypt dispatch for `secret:`/`snippet:` ids (its plan's
+  04 §3.2) is an implementation courtesy that keeps the vault out of
+  its memory, not a cryptographic boundary — the setup copy says so
+  plainly rather than letting the narrower pin warnings imply the key
+  is scoped. The inverse path is specified too: removing a locally
   trusted pin ("forget host") **tombstones the matching `hostkey:`
   record** — a present record with no local pin is exactly the
   first-seen auto-apply state above, so without the tombstone the
