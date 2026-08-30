@@ -87,8 +87,14 @@ persistent-store flow-back; present-day Séance rebuilds its in-memory
 store per round, so every pull harmlessly re-delivers preserved records
 (see "What flows back"). With a persistent store, a build whose
 known-kind set grew must re-scan the **local** store to apply previously
-preserved records — the pull will never deliver them again; a fresh
-store recovers them on its first full pull. Add the
+preserved records — the pull will never deliver them again. The trigger
+is concrete, not aspirational: persist the build's known-kind set
+alongside the store and rescan at startup whenever the current set has
+grown beyond the stored one (updating it afterwards) — or simply
+re-apply the whole local store at startup, which subsumes the check;
+either satisfies the requirement, but nothing else ever re-delivers
+those records, so a store with no such trigger strands them forever. A
+fresh store recovers them on its first full pull. Add the
 `bookmark` kind + `Bookmark`
 model. Séance's apply path never decodes bookmark payloads at all
 (`case bookmark: break;` — there is no bookmark store), and the
@@ -114,7 +120,12 @@ unknown-kind record, the pull high-water mark has advanced past it, so
 an immediate second round fetches nothing for that id — the no-refetch
 property every persistent store built on this path leans on, and the
 only one of the three an apply-only cursor advance would break while
-passing the other two tests. All three tests run against a store and
+passing the other two tests. And a fourth pinning the upgrade path end
+to end: a store holding a preserved unknown-kind record, re-opened by
+a build whose known-kind set now includes that kind, applies the
+record through the startup rescan above with **no pull involved** (the
+harness delivers nothing) — because no pull will ever deliver it
+again. All four tests run against a store and
 cursor that persist across rounds — a test double at PR-S1 time, since
 present-day Séance rebuilds its store per round (high-water mark
 restarting at zero) and the cursor test is unimplementable against that
@@ -173,85 +184,92 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
 
 - In shared-account mode Poltergeist reads `serverConfig` records
   **read-only** (the user's Séance servers appear as ready-made bookmark
-  sources) — and **endpoint-pinned**: each Poltergeist device records
-  the endpoint it bookmarked, and the check is **connect-time and
-  record-agnostic** — connecting to any endpoint that differs from the
-  recorded one costs a one-time confirmation on that device (and a
-  device with nothing recorded yet prompts on its **first** connect:
-  the record is only ever written by a local user act — creating the
-  bookmark on this device, or confirming a connect — never seeded from
-  a synced-in record, or a fresh device bookmarking an
-  already-rewritten server would record the attacker endpoint and
-  connect silently) —
-  confirming *replaces* the recorded endpoint, never adds to an
-  allowlist, so flip-flopping between two previously confirmed
-  endpoints re-triggers the check every time and cannot redirect
-  silently; and the dialog shows the recorded endpoint beside the new
-  one (old → new, plus which record kind delivered the change) — a
-  generic prompt indistinguishable from first-connect TOFU would train
-  exactly the click-through an attacker needs — whether
-  the change arrived through a Séance-side `serverConfig` edit or a
-  rewritten `bookmark:` record (Poltergeist devices legitimately write
-  that kind, so a compromised one could LWW-rewrite either record and
-  redirect a connection to a credential-collecting host that no pin
-  conflict would ever flag) — and syncs host-key pins bidirectionally
-  as standard
+  sources), syncs host-key pins bidirectionally as standard
   `hostkey:<host:port>` records — the same trust the user's other Séance
-  devices already exchange. Shared-account mode therefore extends TOFU
-  trust to every app on the account — **including first-seen keys**:
-  where a device holds no local pin to conflict with, a synced pin is
-  applied as trusted with no warning (that silent propagation *is* the
-  multi-device pin-sync feature), which means one compromised device on
-  the account can mint trust for hosts the fleet has never seen — a
-  residual risk the shared-mode setup copy must disclose, quarantine or
-  no quarantine — alongside the broadest exposure underneath all of
-  this: any app signed into the shared account derives the account key
-  and **can decrypt every synced record**, `secret` records (stored
-  credentials) included, not only the kinds it writes. Poltergeist's
-  never-decrypt dispatch for `secret:`/`snippet:` ids (its plan's
-  04 §3.2) is an implementation courtesy that keeps the vault out of
-  its memory, not a cryptographic boundary — the setup copy says so
-  plainly rather than letting the narrower pin warnings imply the key
-  is scoped. The inverse path is specified too: removing a locally
-  trusted pin ("forget host") **tombstones the matching `hostkey:`
-  record** — a present record with no local pin is exactly the
-  first-seen auto-apply state above, so without the tombstone the
-  untrusted key would silently resurrect on the next pull or startup
-  re-derivation diff (the pin analogue of #54's resurrection, in the
-  very section built to prevent that class; a tombstone that later
-  loses LWW to a genuinely newer pin edit resolves to the edit — the
-  intended semantics). A synced pin that conflicts with a
-  locally known key must surface a user-visible warning (treated as a
-  possible MITM), never a silent overwrite — and the conflicting incoming
-  pin is **quarantined at the application layer**: held unapplied to the
-  local TOFU store until the user resolves the warning — and durably
-  so: quarantine state survives restarts and a dismissed dialog,
-  persisted or (simpler and self-healing) **re-derived at startup by
-  diffing the stored `hostkey:` records against the local TOFU store**,
-  because a persistent record store advances its pull high-water mark
-  past the merged record and never re-delivers it to re-arm the warning
-  (the same no-refetch property the PR-S1 preserve path notes above) —
-  a memory-only quarantine would silently evaporate on restart while
-  the store keeps the attacker's pin as the LWW winner. The record store
-  itself still merges by LWW (the wire behavior stays untouched, per the
-  never-touch list above); what is gated is applying the synced key as
-  trusted — otherwise a newer LWW tuple from a compromised device would
-  replace the locally trusted key and the warning would be cosmetic.
-  Resolution semantics: **keep local** re-pushes the kept pin under a
-  newer LWW tuple, so the user's trust decision becomes canonical — the
-  conflict stops re-arming here and stops firing on devices that never
-  applied the conflicting pin. One caveat: a device that already chose
-  **accept synced** holds the conflicting key locally, so the canonical
-  pin fires one more warning there — and opposite answers ping-pong
-  (each keep-local re-pushes its own key under a newer tuple, re-arming
-  the other side) until the affected devices agree; convergence costs
-  one resolution per device that applied the conflicting key. **Accept
-  synced** applies the quarantined key. And the protection is only as wide as its weakest device: Séance
-  itself currently applies pulled pins unconditionally
-  (`sync_coordinator.dart` — filed as
-  [#56](https://github.com/L-K-M/Seance/issues/56)), so until that lands,
-  shared mode silently overwrites trust on Séance devices even while
-  Poltergeist quarantines.
+  devices already exchange — and therefore extends TOFU trust to every
+  app on the account. The moving parts, one per sub-bullet:
+  - **Endpoint pinning — connect-time, record-agnostic.** Each
+    Poltergeist device records the endpoint it bookmarked, and
+    connecting to any endpoint that differs from the
+    recorded one costs a one-time confirmation on that device (and a
+    device with nothing recorded yet prompts on its **first** connect:
+    the record is only ever written by a local user act — creating the
+    bookmark on this device, or confirming a connect — never seeded from
+    a synced-in record, or a fresh device bookmarking an
+    already-rewritten server would record the attacker endpoint and
+    connect silently).
+    Confirming *replaces* the recorded endpoint, never adds to an
+    allowlist, so flip-flopping between two previously confirmed
+    endpoints re-triggers the check every time and cannot redirect
+    silently; and the dialog shows the recorded endpoint beside the new
+    one (old → new, plus which record kind delivered the change) — a
+    generic prompt indistinguishable from first-connect TOFU would train
+    exactly the click-through an attacker needs — whether
+    the change arrived through a Séance-side `serverConfig` edit or a
+    rewritten `bookmark:` record (Poltergeist devices legitimately write
+    that kind, so a compromised one could LWW-rewrite either record and
+    redirect a connection to a credential-collecting host that no pin
+    conflict would ever flag).
+  - **First-seen keys, and the account key's true scope.** Where a
+    device holds no local pin to conflict with, a synced pin is
+    applied as trusted with no warning (that silent propagation *is* the
+    multi-device pin-sync feature), which means one compromised device on
+    the account can mint trust for hosts the fleet has never seen — a
+    residual risk the shared-mode setup copy must disclose, quarantine or
+    no quarantine — alongside the broadest exposure underneath all of
+    this: any app signed into the shared account derives the account key
+    and **can decrypt every synced record**, `secret` records (stored
+    credentials) included, not only the kinds it writes. Poltergeist's
+    never-decrypt dispatch for `secret:`/`snippet:` ids (its plan's
+    04 §3.2) is an implementation courtesy that keeps the vault out of
+    its memory, not a cryptographic boundary — the setup copy says so
+    plainly rather than letting the narrower pin warnings imply the key
+    is scoped.
+  - **Forgetting a host tombstones the pin.** The inverse path is
+    specified too: removing a locally
+    trusted pin ("forget host") **tombstones the matching `hostkey:`
+    record** — a present record with no local pin is exactly the
+    first-seen auto-apply state above, so without the tombstone the
+    untrusted key would silently resurrect on the next pull or startup
+    re-derivation diff (the pin analogue of #54's resurrection, in the
+    very section built to prevent that class; a tombstone that later
+    loses LWW to a genuinely newer pin edit resolves to the edit — the
+    intended semantics).
+  - **Conflicting pins quarantine — durably.** A synced pin that
+    conflicts with a
+    locally known key must surface a user-visible warning (treated as a
+    possible MITM), never a silent overwrite — and the conflicting incoming
+    pin is **quarantined at the application layer**: held unapplied to the
+    local TOFU store until the user resolves the warning — and durably
+    so: quarantine state survives restarts and a dismissed dialog,
+    persisted or (simpler and self-healing) **re-derived at startup by
+    diffing the stored `hostkey:` records against the local TOFU store**,
+    because a persistent record store advances its pull high-water mark
+    past the merged record and never re-delivers it to re-arm the warning
+    (the same no-refetch property the PR-S1 preserve path notes above) —
+    a memory-only quarantine would silently evaporate on restart while
+    the store keeps the attacker's pin as the LWW winner.
+  - **LWW merge stays; the trusted apply is what's gated.** The record store
+    itself still merges by LWW (the wire behavior stays untouched, per the
+    never-touch list above); what is gated is applying the synced key as
+    trusted — otherwise a newer LWW tuple from a compromised device would
+    replace the locally trusted key and the warning would be cosmetic.
+  - **Resolution semantics.** **Keep local** re-pushes the kept pin under a
+    newer LWW tuple, so the user's trust decision becomes canonical — the
+    conflict stops re-arming here and stops firing on devices that never
+    applied the conflicting pin. One caveat: a device that already chose
+    **accept synced** holds the conflicting key locally, so the canonical
+    pin fires one more warning there — and opposite answers ping-pong
+    (each keep-local re-pushes its own key under a newer tuple, re-arming
+    the other side) until the affected devices agree; convergence costs
+    one resolution per device that applied the conflicting key. **Accept
+    synced** applies the quarantined key.
+  - **The weakest device bounds the protection.** Séance
+    itself currently applies pulled pins unconditionally
+    (`sync_coordinator.dart` — filed as
+    [#56](https://github.com/L-K-M/Seance/issues/56)), so until that lands,
+    shared mode silently overwrites trust on Séance devices even while
+    Poltergeist quarantines.
 - Poltergeist writes only `bookmark:` and `hostkey:` records; it never
   edits `serverConfig`/`secret`/`snippet` records and never exposes
   `DELETE /v1/account` in shared mode (that endpoint nukes both apps'
