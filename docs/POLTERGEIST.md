@@ -63,7 +63,7 @@ PR-S1 regression test pins.
 | PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist — under it the PORTS.md attribution ledger is deliberately an engineering-provenance convention, not a license term; MIT for both repos would be the pick if attribution ever needed to be enforceable) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
 | PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account |
 | PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
-| PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole seconds — consumers must round or tolerance-compare mtimes, never compare exactly), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
+| PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole **uint32** seconds — consumers must round or tolerance-compare mtimes, never compare exactly, and clamp out-of-range values to the 1970–2106 window before setstat rather than letting them wrap), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
 | PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own STATUS.md item #1 and a deliberately deferred item — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
 
 **PR-S1 detail** (the table row's full spec): change
@@ -96,7 +96,12 @@ LWW tuple survive an apply round **byte-identical** (blob bytes
 compared, not decoded equality), with push emitting nothing for it —
 the "never re-sealed, never re-pushed" rule above, which a naive
 implementation breaks invisibly until a later build tries to learn the
-kind.
+kind. And a third pinning the cursor: after a round that preserves an
+unknown-kind record, the pull high-water mark has advanced past it, so
+an immediate second round fetches nothing for that id — the no-refetch
+property every persistent store built on this path leans on, and the
+only one of the three an apply-only cursor advance would break while
+passing the other two tests.
 
 Until PR-S1 ships in a Séance release **and every device runs it**,
 Poltergeist defaults to a *separate* account on the same sync server
@@ -153,7 +158,13 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   sources) — and **endpoint-pinned**: each Poltergeist device records
   the endpoint it bookmarked, and the check is **connect-time and
   record-agnostic** — connecting to any endpoint that differs from the
-  recorded one costs a one-time confirmation on that device —
+  recorded one costs a one-time confirmation on that device (and a
+  device with nothing recorded yet prompts on its **first** connect:
+  the record is only ever written by a local user act — creating the
+  bookmark on this device, or confirming a connect — never seeded from
+  a synced-in record, or a fresh device bookmarking an
+  already-rewritten server would record the attacker endpoint and
+  connect silently) —
   confirming *replaces* the recorded endpoint, never adds to an
   allowlist, so flip-flopping between two previously confirmed
   endpoints re-triggers the check every time and cannot redirect
@@ -172,7 +183,15 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   multi-device pin-sync feature), which means one compromised device on
   the account can mint trust for hosts the fleet has never seen — a
   residual risk the shared-mode setup copy must disclose, quarantine or
-  no quarantine. A synced pin that conflicts with a
+  no quarantine. The inverse path is specified too: removing a locally
+  trusted pin ("forget host") **tombstones the matching `hostkey:`
+  record** — a present record with no local pin is exactly the
+  first-seen auto-apply state above, so without the tombstone the
+  untrusted key would silently resurrect on the next pull or startup
+  re-derivation diff (the pin analogue of #54's resurrection, in the
+  very section built to prevent that class; a tombstone that later
+  loses LWW to a genuinely newer pin edit resolves to the edit — the
+  intended semantics). A synced pin that conflicts with a
   locally known key must surface a user-visible warning (treated as a
   possible MITM), never a silent overwrite — and the conflicting incoming
   pin is **quarantined at the application layer**: held unapplied to the
