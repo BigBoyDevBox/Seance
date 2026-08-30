@@ -187,7 +187,10 @@ release).
 - **Poltergeist**, the sibling two-pane SFTP app, consumes `seance_protocol`
   + `seance_core` as pinned dependencies and has a short queue of small
   upstream asks (forward-compatible record kinds being the important one) —
-  see [docs/POLTERGEIST.md](POLTERGEIST.md).
+  see [docs/POLTERGEIST.md](POLTERGEIST.md). Two of the gaps it documents —
+  unknown record kinds decoding as `serverConfig`, and deletes never writing
+  tombstones — are live Séance bugs worth tracking on their own, not just as
+  Poltergeist asks.
 - Release/build/deploy tooling is in place and aligned with the sibling repos:
   `scripts/release.sh` (pubspec-lockstep bump + `v*` tag →
   `.github/workflows/release.yml` publishes the server binaries, the GHCR image,
