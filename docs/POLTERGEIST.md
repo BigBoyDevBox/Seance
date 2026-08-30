@@ -11,20 +11,20 @@ Séance session touching these areas knows a second consumer exists.
 
 ## How Poltergeist consumes Séance
 
-- **Git-pinned dependencies, never forks** (pinning is deliberately not
-  gated on PR-S0: both repos share one owner, so consuming the
-  un-licensed packages is the rights holder's own call — a rationale
-  that holds only while Séance has no external contributions (verified
-  at this writing: every committer identity in `git shortlog -sne` is
-  the owner's own accounts and machines); PR-S0 re-verifies sole
-  authorship, or collects contributor sign-off, before the license is
-  chosen. The LICENSE is
-  what the copy-with-attribution path and any downstream user need):
-  `seance_protocol` and
+- **Git-pinned dependencies, never forks**: `seance_protocol` and
   `seance_core` (records/crypto/DTOs, `SyncEngine`/`HttpSyncClient`/
   `LocalRecordStore`, `RemoteFileSystem` + adapter, `TofuVerifier`, stores,
   ssh_config import, probe service). The pin is a Séance tag, bumped as a
   routine chore.
+
+  Pinning is deliberately not gated on PR-S0: both repos share one owner,
+  so consuming the unlicensed packages is the rights holder's own call —
+  a rationale that holds only while Séance has no external contributions
+  (verified at this writing: every committer identity in
+  `git shortlog -sne` is the owner's own accounts and machines). PR-S0
+  re-verifies sole authorship, or collects contributor sign-off, before
+  the license is chosen; the LICENSE is what the copy-with-attribution
+  path and any downstream user need.
 - **Copy-with-attribution** for app-layer assets that live outside the pure
   packages (managed-checkout pipeline, atomic-file helpers, the built-in
   editor stack, toasts, `MiddleEllipsisText`, adaptive layout math, the
@@ -154,10 +154,15 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   trusted — otherwise a newer LWW tuple from a compromised device would
   replace the locally trusted key and the warning would be cosmetic.
   Resolution semantics: **keep local** re-pushes the kept pin under a
-  newer LWW tuple, so the user's trust decision becomes canonical and
-  the conflict disarms fleet-wide instead of re-firing on every other
-  device (and re-arming here); **accept synced** applies the quarantined
-  key. And the protection is only as wide as its weakest device: Séance
+  newer LWW tuple, so the user's trust decision becomes canonical — the
+  conflict stops re-arming here and stops firing on devices that never
+  applied the conflicting pin. One caveat: a device that already chose
+  **accept synced** holds the conflicting key locally, so the canonical
+  pin fires one more warning there — and opposite answers ping-pong
+  (each keep-local re-pushes its own key under a newer tuple, re-arming
+  the other side) until the affected devices agree; convergence costs
+  one resolution per device that applied the conflicting key. **Accept
+  synced** applies the quarantined key. And the protection is only as wide as its weakest device: Séance
   itself currently applies pulled pins unconditionally
   (`sync_coordinator.dart` — filed as
   [#56](https://github.com/L-K-M/Seance/issues/56)), so until that lands,
