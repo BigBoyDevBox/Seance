@@ -153,7 +153,11 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   sources) — and **endpoint-pinned**: each Poltergeist device records
   the endpoint it bookmarked, and the check is **connect-time and
   record-agnostic** — connecting to any endpoint that differs from the
-  recorded one costs a one-time confirmation on that device, whether
+  recorded one costs a one-time confirmation on that device —
+  confirming *replaces* the recorded endpoint, never adds to an
+  allowlist, so flip-flopping between two previously confirmed
+  endpoints re-triggers the check every time and cannot redirect
+  silently — whether
   the change arrived through a Séance-side `serverConfig` edit or a
   rewritten `bookmark:` record (Poltergeist devices legitimately write
   that kind, so a compromised one could LWW-rewrite either record and
@@ -172,7 +176,15 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
   locally known key must surface a user-visible warning (treated as a
   possible MITM), never a silent overwrite — and the conflicting incoming
   pin is **quarantined at the application layer**: held unapplied to the
-  local TOFU store until the user resolves the warning. The record store
+  local TOFU store until the user resolves the warning — and durably
+  so: quarantine state survives restarts and a dismissed dialog,
+  persisted or (simpler and self-healing) **re-derived at startup by
+  diffing the stored `hostkey:` records against the local TOFU store**,
+  because a persistent record store advances its pull high-water mark
+  past the merged record and never re-delivers it to re-arm the warning
+  (the same no-refetch property the PR-S1 preserve path notes above) —
+  a memory-only quarantine would silently evaporate on restart while
+  the store keeps the attacker's pin as the LWW winner. The record store
   itself still merges by LWW (the wire behavior stays untouched, per the
   never-touch list above); what is gated is applying the synced key as
   trusted — otherwise a newer LWW tuple from a compromised device would
