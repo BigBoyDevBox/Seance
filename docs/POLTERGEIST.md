@@ -171,15 +171,16 @@ Poltergeist's setup flow, one per bullet:
 ## What flows back
 
 Poltergeist's plan commits to porting improvements back rather than
-forking: the persistent local record store with real tombstones (fixes the
-delete-resurrection gap — today nothing in Séance ever writes a tombstone,
-so a deleted server resurrects on the next pull, and every Séance pull
-is effectively full: the app rebuilds its in-memory record store each
-round, so the high-water mark restarts at zero; when tombstones
-land, applying one must remove the record regardless of kind
-decodability — preserved unknown-kind records included — or a deleted
-bookmark resurrects on any device that later learns the kind, a
-preserved-record variant of [#54](https://github.com/L-K-M/Seance/issues/54)),
+forking: the persistent local record store with real tombstones — this
+fixes the delete-resurrection gap (today nothing in Séance ever writes
+a tombstone, so a deleted server resurrects on the next pull, and
+every Séance pull is effectively full: the app rebuilds its in-memory
+record store each round, so the high-water mark restarts at zero).
+One normative requirement when tombstones land: **applying one must
+remove the record regardless of kind decodability — preserved
+unknown-kind records included** — or a deleted bookmark resurrects on
+any device that later learns the kind, a preserved-record variant of
+[#54](https://github.com/L-K-M/Seance/issues/54). Also flowing back:
 theme-aware status
 colors, staged responsive collapse, keyboard/command-registry patterns, and
 any bug fix made in a ported file. The `PORTS.md` ledger on the Poltergeist
@@ -239,7 +240,18 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
     re-derivation diff (the pin analogue of #54's resurrection, in the
     very section built to prevent that class; a tombstone that later
     loses LWW to a genuinely newer pin edit resolves to the edit — the
-    intended semantics).
+    intended semantics). The cross-device half is specified too:
+    **pulling that tombstone on a device that still trusts the key
+    drops its local TOFU pin** — forget-host is a fleet-wide act, and
+    a device that kept local trust would re-push the forgotten key
+    under a newer LWW tuple on its next local pin write, resurrecting
+    it everywhere (removal is also the fail-safe direction: the next
+    connect there falls back to a first-connect prompt, never to
+    silent trust — unlike replacement, which the quarantine gates);
+    and the startup re-derivation diff classifies "tombstoned record,
+    no local pin" as **resolved**, never a conflict — re-arming a MITM
+    warning after every forget would train exactly the dismissal the
+    warning must not.
   - **Conflicting pins quarantine — durably.** A synced pin that
     conflicts with a
     locally known key must surface a user-visible warning (treated as a
@@ -267,7 +279,10 @@ side is the tracking mechanism; nothing in that flow blocks Séance work.
     pin fires one more warning there — and opposite answers ping-pong
     (each keep-local re-pushes its own key under a newer tuple, re-arming
     the other side) until the affected devices agree; convergence costs
-    one resolution per device that applied the conflicting key. **Accept
+    **at least** one resolution per device that applied the conflicting
+    key — and keeps costing more for as long as devices keep giving
+    opposite answers (the floor holds only once they stop opposing).
+    **Accept
     synced** applies the quarantined key.
   - **The weakest device bounds the protection.** Séance
     itself currently applies pulled pins unconditionally
