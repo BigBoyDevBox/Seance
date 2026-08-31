@@ -194,6 +194,21 @@ void main() {
         throwsUnsupportedError,
       );
     });
+
+    test('future rule versions remain available to the execution gate', () {
+      final decoded = Bookmark.fromJson({
+        ..._baseJson(BookmarkKind.savedSync),
+        'sync': {
+          'source': {'path': '~/site'},
+          'destination': {'path': '~/backup'},
+          'rulesVersion': 2,
+          'rules': {'future': true},
+        },
+      }, recordId: _recordId);
+
+      expect(decoded.sync!.rulesVersion, 2);
+      expect(decoded.sync!.rules, {'future': true});
+    });
   });
 
   group('Bookmark strict decoding', () {
@@ -256,6 +271,16 @@ void main() {
         }, recordId: _recordId),
         throwsFormatException,
       );
+    });
+
+    test('ignores and drops unknown top-level fields', () {
+      final decoded = Bookmark.fromJson({
+        ..._baseJson(BookmarkKind.localFolder),
+        'localPath': '~/Downloads',
+        'futureTopLevel': true,
+      }, recordId: _recordId);
+
+      expect(decoded.toJson(), isNot(contains('futureTopLevel')));
     });
 
     test('rejects blank structural strings and invalid timestamps', () {
@@ -375,6 +400,21 @@ void main() {
       expect(decoded.server!.identity!.port, 2222);
       expect(decoded.server!.identity!.secretRef, 'secret-1');
       expect(decoded.server!.identity!.identityFilePath, '~/.ssh/id_ed25519');
+
+      final blankCredentials = Bookmark.fromJson({
+        ...valid,
+        'server': {
+          'identity': {
+            'host': 'nas.local',
+            'username': 'alice',
+            'authMethod': 'privateKey',
+            'secretRef': '   ',
+            'identityFilePath': '   ',
+          },
+        },
+      }, recordId: _recordId);
+      expect(blankCredentials.server!.identity!.secretRef, isNull);
+      expect(blankCredentials.server!.identity!.identityFilePath, isNull);
     });
   });
 }

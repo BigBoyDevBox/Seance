@@ -104,7 +104,7 @@ class SyncCoordinator {
         final dec = await codec.decrypt(enc);
 
         // Tombstones have no encrypted kind. Preserve legacy bare-id server
-        // deletion; prefixed records are owned by stores Séance lacks here.
+        // deletion; prefixed tombstones remain no-ops pending per-kind delete.
         if (dec.deleted) {
           if (!dec.id.contains(_recordKindDelimiter)) {
             await configStore.deleteServer(dec.id);

@@ -322,6 +322,7 @@ void main() {
       );
 
       expect(decoded.kind, RecordKind.unknown);
+      expect(decoded.data, {'value': 1});
       await expectLater(
         () async => codec.encrypt(
           const DecryptedRecord(
