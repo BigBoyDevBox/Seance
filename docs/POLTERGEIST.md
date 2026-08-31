@@ -70,11 +70,17 @@ PR-S1 regression test pins.
 |---|---|---|
 | PR-S0 | Add a LICENSE to Séance (suggest Unlicense, matching Poltergeist — under it the PORTS.md attribution ledger is deliberately an engineering-provenance convention, not a license term; MIT for both repos would be the pick if attribution ever needed to be enforceable) | The repo currently has no license file; Poltergeist's copy-with-attribution step is gated on it (and downstream users of either repo need it anyway) |
 | PR-S1 | **Forward-compatible record kinds** ([#53](https://github.com/L-K-M/Seance/issues/53)) — add `RecordKind.unknown`, map unknown kind names to it, skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores`, add the `bookmark` kind + `Bookmark` model (full spec below the table) | Today an unknown kind decodes as `serverConfig`, which bricks sync rounds or mints a phantom server; a real forward-compat bug independent of Poltergeist, and the hard gate before the two apps may share a sync account — recommended: land the [#56](https://github.com/L-K-M/Seance/issues/56) fix in the same minimum release, so one version assertion covers both axes (see "Cover pin trust too" below) |
-| PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item (docs/SFTP.md) needs |
+| PR-S2 | Extract `openAuthenticatedClient(...)` (socket + TOFU + auth + connection log + failure summarizer, minus shell/PTY) from `SshSessionManager.connect`; recompose `connect()` on top, behavior unchanged | Lets a file manager authenticate without opening a shell channel; it is also what Séance's own "dedicated transfer connection" future item ([docs/SFTP.md](SFTP.md)) needs |
 | PR-S3 | Additive `RemoteFileSystem` methods: `setTimes` (SFTP setstat atime+mtime; note SFTP v3 timestamps are whole **uint32** seconds — consumers must round or tolerance-compare mtimes, never compare exactly, and clamp out-of-range values to the 1970–2106 window before setstat rather than letting them wrap), `setOwner` (chown/chgrp), an optional per-call hashing flag. Ranged read is deliberately **not** included — Poltergeist defers it to its resumable-transfer work (v2) and would file it as its own small PR then | `setTimes` is a hard prerequisite for sync convergence (mtime-based comparison); the rest closes documented interface gaps. All additive; in-memory-fake test coverage included |
 | PR-S4 | ssh-agent auth (`$SSH_AUTH_SOCK` / Windows named pipe, custom `SSHKeyPair` signer) and ProxyJump execution behind the already-modeled `jumpHostId` | Séance's own deferred backlog item (ssh-agent auth / ProxyJump — see STATUS.md, named rather than numbered so reordering the backlog cannot rot this pointer) — both apps' power users need it; Poltergeist schedules it as its first post-v1 fast-follow and would land it here |
 
-**PR-S1 detail** (the table row's full spec): change
+**PR-S1 detail** (the table row's full spec — sequencing note: the
+forward-compat half below, `RecordKind.unknown` + skip-and-preserve +
+the per-record try/catch with tests 1–3, fixes live bug
+[#53](https://github.com/L-K-M/Seance/issues/53) on its own and may
+land first as its own small PR, with the `bookmark` kind + `Bookmark`
+model following; test 4 needs *some* newly-learned kind, not
+`bookmark` specifically): change
 `recordKindFromName`'s `orElse` from `serverConfig` to `unknown`, and
 skip-and-preserve unknown kinds in `SyncCoordinator.applyToStores` with a
 per-record try/catch. Preserved records keep their original sealed blobs
