@@ -234,6 +234,7 @@ void main() {
 
       try {
         expect(recordKindFromName('flurb'), RecordKind.unknown);
+        await pumpEventQueue();
         expect(records, hasLength(1));
         expect(records.single.level, Level.FINE);
         expect(records.single.message, contains('flurb'));
@@ -304,6 +305,7 @@ void main() {
     test('unknown kinds decode as unknown and cannot be encrypted', () async {
       final vaultKey = secureRandomBytes(32);
       final codec = RecordCodec(vaultKey);
+      // Unknown kinds cannot pass encrypt, so mirror its plaintext shape.
       final blob = await VaultCrypto.sealJson(vaultKey, const {
         'kind': 'flurb',
         'data': {'value': 1},
@@ -323,7 +325,7 @@ void main() {
       await expectLater(
         () async => codec.encrypt(
           const DecryptedRecord(
-            id: 'r1',
+            id: 'flurb:r1',
             kind: RecordKind.unknown,
             updatedAt: 42,
             deviceId: 'device-a',

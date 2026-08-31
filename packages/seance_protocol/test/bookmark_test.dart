@@ -283,10 +283,35 @@ void main() {
         () => Bookmark.fromJson({
           ..._baseJson(BookmarkKind.localFolder),
           'localPath': '~/Downloads',
+          'updatedAt': 'not-a-date',
+        }, recordId: _recordId),
+        throwsFormatException,
+      );
+      expect(
+        () => Bookmark.fromJson({
+          ..._baseJson(BookmarkKind.localFolder),
+          'localPath': '~/Downloads',
+          // Offset-less timestamps are ambiguous across devices.
           'createdAt': '2026-08-30T10:12:00',
         }, recordId: _recordId),
         throwsFormatException,
       );
+    });
+
+    test('rejects rule versions before the initial schema', () {
+      for (final rulesVersion in [0, -1]) {
+        expect(
+          () => Bookmark.fromJson({
+            ..._baseJson(BookmarkKind.savedSync),
+            'sync': {
+              'source': {'path': '~/site'},
+              'destination': {'path': '~/backup'},
+              'rulesVersion': rulesVersion,
+            },
+          }, recordId: _recordId),
+          throwsFormatException,
+        );
+      }
     });
 
     test('rejects relative remote paths', () {
@@ -347,6 +372,7 @@ void main() {
         ...valid,
         'server': _identityJson(),
       }, recordId: _recordId);
+      expect(decoded.server!.identity!.port, 2222);
       expect(decoded.server!.identity!.secretRef, 'secret-1');
       expect(decoded.server!.identity!.identityFilePath, '~/.ssh/id_ed25519');
     });

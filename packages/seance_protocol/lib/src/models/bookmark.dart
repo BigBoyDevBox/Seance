@@ -140,33 +140,41 @@ class SavedSyncSpec {
     'rules': _mutableJsonMap(rules),
   };
 
-  factory SavedSyncSpec.fromJson(
-    Map<String, dynamic> json,
-  ) => _guardFormat('SavedSyncSpec', () {
-    final ignoreRulesValue = json['ignoreRules'];
-    final ignoreRules = <String>[];
-    if (ignoreRulesValue != null) {
-      if (ignoreRulesValue is! List) {
-        throw const FormatException('ignoreRules must be a list');
-      }
-      for (final rule in ignoreRulesValue) {
-        if (rule is! String) {
-          throw const FormatException('ignoreRules must contain strings');
+  factory SavedSyncSpec.fromJson(Map<String, dynamic> json) =>
+      _guardFormat('SavedSyncSpec', () {
+        final ignoreRulesValue = json['ignoreRules'];
+        final ignoreRules = <String>[];
+        if (ignoreRulesValue != null) {
+          if (ignoreRulesValue is! List) {
+            throw const FormatException('ignoreRules must be a list');
+          }
+          for (final rule in ignoreRulesValue) {
+            if (rule is! String) {
+              throw const FormatException('ignoreRules must contain strings');
+            }
+            ignoreRules.add(rule);
+          }
         }
-        ignoreRules.add(rule);
-      }
-    }
 
-    final rulesJson = _optionalMap(json, 'rules') ?? const {};
+        final rulesJson = _optionalMap(json, 'rules') ?? const {};
+        final rulesVersion =
+            _optionalInt(json, 'rulesVersion') ?? _initialRulesVersion;
+        if (rulesVersion < _initialRulesVersion) {
+          throw FormatException(
+            'rulesVersion must be at least $_initialRulesVersion',
+          );
+        }
 
-    return SavedSyncSpec(
-      source: BookmarkLocation.fromJson(_requiredMap(json, 'source')),
-      destination: BookmarkLocation.fromJson(_requiredMap(json, 'destination')),
-      ignoreRules: ignoreRules,
-      rulesVersion: _optionalInt(json, 'rulesVersion') ?? _initialRulesVersion,
-      rules: rulesJson,
-    );
-  });
+        return SavedSyncSpec(
+          source: BookmarkLocation.fromJson(_requiredMap(json, 'source')),
+          destination: BookmarkLocation.fromJson(
+            _requiredMap(json, 'destination'),
+          ),
+          ignoreRules: ignoreRules,
+          rulesVersion: rulesVersion,
+          rules: rulesJson,
+        );
+      });
 }
 
 class Bookmark {
