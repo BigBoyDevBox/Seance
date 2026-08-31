@@ -28,3 +28,8 @@ that for the full rationale, alternatives considered, and roadmap).
   auto-run) and a session-aware chat whose only two tools are web search and a
   never-executing paste-to-prompt. Secret redaction is on by default; point it
   at local Ollama for a fully offline setup.
+
+## License
+
+Séance's original code uses the [Unlicense](LICENSE). Vendored xterm.dart
+remains [MIT-licensed](third_party/xterm/LICENSE).
