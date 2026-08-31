@@ -280,7 +280,7 @@ void main() {
       expect(dec.kind, RecordKind.unknown);
     });
 
-    test('serialized envelope does not expose the record kind', () async {
+    test('serialized envelope has no separate kind field', () async {
       final codec = RecordCodec(secureRandomBytes(32));
       final enc = await codec.encrypt(
         DecryptedRecord(
@@ -320,8 +320,8 @@ void main() {
       );
 
       expect(decoded.kind, RecordKind.unknown);
-      expect(
-        () => codec.encrypt(
+      await expectLater(
+        () async => codec.encrypt(
           const DecryptedRecord(
             id: 'r1',
             kind: RecordKind.unknown,
