@@ -30,7 +30,8 @@ same change.
   one stranded assistant trailer in squash bodies and no human attribution.
   The 432-entry tree had no gitlinks or `.gitmodules`; `packages/` is the
   first-party workspace, and `third_party/xterm` was the sole vendored tree,
-  with its MIT license retained.
+  with its MIT license retained. Any future external contribution needs an
+  explicit Unlicense-compatible grant before it lands.
 - **Copy-with-attribution** for app-layer assets that live outside the pure
   packages (managed-checkout pipeline, atomic-file helpers, the built-in
   editor stack, toasts, `MiddleEllipsisText`, adaptive layout math, the
