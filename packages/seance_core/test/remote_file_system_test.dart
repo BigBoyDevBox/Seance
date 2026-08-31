@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:dartssh2/dartssh2.dart';
 import 'package:seance_core/seance_core.dart';
 import 'package:seance_core/src/ssh/remote_file_system.dart'
@@ -55,6 +58,43 @@ void main() {
   });
 
   group('DartSshRemoteFileSystem', () {
+    test('downloads without hashing for the M0 benchmark', () async {
+      final bytes = Uint8List.fromList([1, 2, 3, 4]);
+      final client = _FakeSftpClient(fileBytes: bytes);
+      final fileSystem = DartSshRemoteFileSystem(client);
+      final output = BytesBuilder(copy: false);
+      final destination = StreamController<List<int>>();
+      final consumed = destination.stream.forEach(output.add);
+
+      final entry = await fileSystem.download(
+        '/srv/file.bin',
+        destination.sink,
+        computeHash: false,
+      );
+      await destination.close();
+      await consumed;
+
+      expect(output.takeBytes(), bytes);
+      expect(entry.contentSha256, isNull);
+    });
+
+    test('uploads without hashing for the M0 benchmark', () async {
+      final bytes = Uint8List.fromList([5, 6, 7, 8]);
+      final client = _FakeSftpClient(fileBytes: Uint8List(0));
+      final fileSystem = DartSshRemoteFileSystem(client);
+
+      final entry = await fileSystem.upload(
+        '/srv/file.bin',
+        Stream.value(bytes),
+        length: bytes.length,
+        overwrite: true,
+        computeHash: false,
+      );
+
+      expect(client.writtenBytes.takeBytes(), bytes);
+      expect(entry.contentSha256, isNull);
+    });
+
     test('maps SFTP ownership and timestamps into entries', () async {
       final client = _FakeSftpClient(
         statResult: SftpFileAttrs(
@@ -190,16 +230,24 @@ void main() {
 class _FakeSftpClient implements SftpClient {
   _FakeSftpClient({
     SftpFileAttrs? statResult,
+    Uint8List? fileBytes,
     this.statError,
     this.readlinkResult = 'target',
     this.readlinkError,
   }) : statResult =
-           statResult ?? SftpFileAttrs(mode: const SftpFileMode.value(0x81A4));
+           statResult ??
+           SftpFileAttrs(
+             size: fileBytes?.length ?? 42,
+             mode: const SftpFileMode.value(0x81A4),
+           ),
+       fileBytes = fileBytes ?? Uint8List(0);
 
   final SftpFileAttrs statResult;
   final Object? statError;
   final String readlinkResult;
   final Object? readlinkError;
+  final Uint8List fileBytes;
+  final BytesBuilder writtenBytes = BytesBuilder(copy: false);
 
   int statCalls = 0;
   SftpFileAttrs? lastSetStat;
@@ -233,5 +281,48 @@ class _FakeSftpClient implements SftpClient {
   }
 
   @override
+  Future<SftpFile> open(
+    String path, {
+    SftpFileOpenMode mode = SftpFileOpenMode.read,
+  }) async => _FakeSftpFile(this, fileBytes, statResult, writtenBytes);
+
+  @override
+  Future<void> rename(String oldPath, String newPath) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeSftpFile extends SftpFile {
+  _FakeSftpFile(SftpClient client, this.bytes, this.attrs, this.writtenBytes)
+    : super(client, Uint8List(0));
+
+  final Uint8List bytes;
+  final SftpFileAttrs attrs;
+  final BytesBuilder writtenBytes;
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  Stream<Uint8List> read({
+    int? length,
+    int offset = 0,
+    void Function(int bytesRead)? onProgress,
+    int chunkSize = 16 * 1024,
+    int maxPendingRequests = 64,
+  }) async* {
+    final end = length == null ? bytes.length : offset + length;
+    final result = Uint8List.sublistView(bytes, offset, end);
+    onProgress?.call(result.length);
+    yield result;
+  }
+
+  @override
+  Future<SftpFileAttrs> stat() async => attrs;
+
+  @override
+  Future<void> writeBytes(Uint8List data, {int offset = 0}) async {
+    writtenBytes.add(data);
+  }
 }

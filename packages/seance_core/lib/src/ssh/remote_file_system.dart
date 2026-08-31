@@ -111,6 +111,7 @@ abstract interface class RemoteFileSystem {
   Future<RemoteFileEntry> download(
     String path,
     StreamSink<List<int>> destination, {
+    bool computeHash = true,
     RemoteTransferProgress? onProgress,
     RemoteTransferCancellation? cancellation,
   });
@@ -123,6 +124,7 @@ abstract interface class RemoteFileSystem {
     Stream<List<int>> content, {
     int? length,
     bool overwrite = false,
+    bool computeHash = true,
     int? preserveMode,
     RemoteFileEntry? expectedTarget,
     RemoteTransferProgress? onProgress,
@@ -288,6 +290,7 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
   Future<RemoteFileEntry> download(
     String path,
     StreamSink<List<int>> destination, {
+    bool computeHash = true,
     RemoteTransferProgress? onProgress,
     RemoteTransferCancellation? cancellation,
   }) => _guard('download', path, () async {
@@ -342,11 +345,11 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
             ),
             cancellation,
           ).map((chunk) {
-            hashInput.add(chunk);
+            if (computeHash) hashInput.add(chunk);
             return chunk;
           });
       await destination.addStream(source.timeout(operationTimeout));
-      hashInput.close();
+      if (computeHash) hashInput.close();
       cancellation?.throwIfCancelled();
       if (transferred != length) {
         throw RemoteFileException(
@@ -367,7 +370,7 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
         path,
         remoteBasename(path),
         finalAttrs,
-        contentSha256: digestSink.value.toString(),
+        contentSha256: computeHash ? digestSink.value.toString() : null,
       );
       if (!_sameSnapshot(initialEntry, finalEntry) ||
           !_sameSnapshot(
@@ -397,6 +400,7 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
     Stream<List<int>> content, {
     int? length,
     bool overwrite = false,
+    bool computeHash = true,
     int? preserveMode,
     RemoteFileEntry? expectedTarget,
     RemoteTransferProgress? onProgress,
@@ -452,14 +456,14 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
       ).timeout(operationTimeout)) {
         cancellation?.throwIfCancelled();
         if (chunk.isEmpty) continue;
-        hashInput.add(chunk);
+        if (computeHash) hashInput.add(chunk);
         await file
             .writeBytes(Uint8List.fromList(chunk), offset: transferred)
             .timeout(operationTimeout);
         transferred += chunk.length;
         onProgress?.call(transferred, length);
       }
-      hashInput.close();
+      if (computeHash) hashInput.close();
       cancellation?.throwIfCancelled();
       if (length != null && transferred != length) {
         throw RemoteFileException(
@@ -508,6 +512,8 @@ class DartSshRemoteFileSystem implements RemoteFileSystem {
       }
       await _client.rename(tempPath, path).timeout(operationTimeout);
       final uploaded = await stat(path, followLinks: false);
+      if (!computeHash) return uploaded;
+
       return _copyEntryWithDigest(uploaded, digestSink.value.toString());
     } catch (_) {
       if (cancellation?.isCancelled ?? false) {
