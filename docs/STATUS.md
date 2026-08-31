@@ -3,15 +3,15 @@
 Living snapshot of where Séance is, what's proven, and what to pick up next.
 Read [AGENTS.md](../AGENTS.md) first for how to build/test.
 
-_Last updated: 2026-08-26 — Android background keep-alive: a foreground
-service anchors the process while sessions are live._
+_Last updated: 2026-08-31 — sync skips and preserves unknown or malformed
+records; the shared protocol now defines bookmarks._
 
 ## Done (implemented + verified)
 
 | Area | State |
 |---|---|
-| `seance_protocol` | Complete. Models (incl. Snippet with `{{placeholder}}` parsing/fill, and `ServerConfig`'s optional `group`/`color`/`icon`/`loginScript` — named accents and icons rather than raw values, so they render per theme and an unknown name decodes to "none"), E2E crypto, records (serverConfig/hostKey/secret/snippet), LWW, sync DTOs. |
-| `seance_core` | Complete. SSH+TOFU, ssh_config import, prober, sync engine + coordinator, LLM providers + chat tools, danger linter, redaction, paste sanitizer, stores; per-server login script typed into the shell once it opens. |
+| `seance_protocol` | Complete. Models (incl. strict Bookmark, Snippet with `{{placeholder}}` parsing/fill, and `ServerConfig`'s optional `group`/`color`/`icon`/`loginScript` — named accents and icons rather than raw values, so they render per theme and an unknown name decodes to "none"), E2E crypto, forward-compatible records (serverConfig/hostKey/secret/snippet/bookmark/unknown), LWW, sync DTOs. |
+| `seance_core` | Complete. SSH+TOFU, ssh_config import, prober, sync engine + fail-soft coordinator, LLM providers + chat tools, danger linter, redaction, paste sanitizer, stores; per-server login script typed into the shell once it opens. |
 | `seance_sync_server` | Complete. 7 endpoints, in-memory + SQLite storage, rate limiting, Dockerfile + compose. |
 | `seance_app` | Complete; `flutter analyze` clean, widget tests pass. Server list is the top-level list; each server can hold several sessions shown as a per-server tab strip (a strip appears only at 2+ tabs, so a single session looks title-bar-less as before), with ⌘T/Ctrl+Shift+T + a "New tab" affordance, status dot: green/grey/red + connecting spinner; resizable tiled panes); right-hand utility panel with Assistant + Snippets + **Files** tabs. Files is session-scoped SFTP over the existing SSH transport: responsive navigation, OSC 7 follow mode, picker/desktop-drop upload, local open + conflict-checked upload-back, mkdir/rename/delete, progress/cancel; narrow/Android gets a full-screen route. See [`docs/SFTP.md`](SFTP.md) for implementation state and remaining real-device work. Snippets are synced command templates with `{{placeholder}}` fill-in dialogs; assistant chat when configured, ⌘/Ctrl+↵ sends; inline command generator (⌘K / Ctrl+Shift+K, prefilled from the current shell line, Enter generates+inserts+closes) turns NL into a reviewed command; the native macOS menu is kept intact (Edit/Window/…) with Settings wired to ⌘, and a Terminal ▸ Generate Command… (⌘K) item; Settings is still an in-app route; settings suggest models from the endpoint with manual fallback; failed connections show a summary + expandable connection log. **Automatic sync** runs at startup, after any server/snippet add/edit/delete (debounced), and every 5 min, with a live header/settings status; the "Sync now" button remains. **Credential sync** is opt-in (global toggle × per-server "allow this credential to sync"; E2E-encrypted). The **built-in text editor** opens at the top with the app's monospace stack, has an in-file find bar (⌘F/Ctrl+F; Enter/F3/⌘G cycle, match-case toggle, all matches highlighted) and basic syntax highlighting (shell, python, js/ts, dart, json, yaml, ini/conf, dockerfile, sql, c-family, xml, markdown — detected by name/extension/shebang); for a server file ⌘S/Ctrl+S saves **and uploads immediately** (⇧⌘S keeps it local; conflicts still prompt). Transient notices app-wide use **top toasts**, never bottom SnackBars, so they can't cover the shell prompt at the bottom of the terminal. On **touch platforms** the terminal shows an on-screen key row (Esc/Tab/Ctrl [sticky]/^C/arrows/Home/End/PgUp/PgDn/`|` `/` `-` `~` + hide-keyboard) and reflows above the soft keyboard. **Command suggestions** (opt-in, local only) surface frequently-run commands in the Snippets tab to save as snippets. **Server groups, colours and icons** are per-server and synced: the list files servers into collapsible sections (alphabetical, ungrouped last; no headers at all until something is grouped, and a live filter overrides collapsed sections so it can never hide a match), each row carries a badge of the server's icon on its accent with the connection dot in the corner, and the accent also rules the terminal's tab strip. Folded sections are device-local (settings), the grouping itself syncs. On **Android**, backgrounding no longer kills the sessions: a `dataSync` foreground service anchors the process while any session is connecting/connected (ongoing notification with the live count, opt-out in Settings ▸ General; `BackgroundKeepAlive` drives it through the `seance/keepalive` channel — on other platforms it is a no-op). Default desktop window 1800×1600. Platform folders committed. |
 | Linux packaging | `scripts/package-linux.sh` turns a built Flutter Linux bundle into `seance_<version>-1_<arch>.deb` and `seance-linux-x64.AppImage`. The .deb's `Depends` is derived from the bundle's actual ELF headers (readelf NEEDED → a soname→package table incl. Ubuntu 24.04 `t64` renames as dpkg alternatives, glibc/libstdc++ floors from symbol versions; a documented optional-soname list covers lazily-loaded native assets like package:jni's `libjvm.so`), the AppImage is built with a pinned appimagetool. Wired into `scripts/build.sh` (Linux `app` target), `ci.yml` (builds + uploads the packages every run), and `release.yml` (x64 assets). **x64 only**: Flutter publishes no linux-arm64 host artifacts (`releases_linux.json` is x64-only), so no arm runner can `flutter build linux` — revisit when that changes. The glibc floor tracks the CI toolchain (currently
@@ -26,7 +26,9 @@ no .rpm/Flatpak — the AppImage covers non-Debian distros; it uses the system G
   seal/open round-trip, wrong-key & tamper rejection, auth-verifier hashing,
   recovery-code round-trip + corruption detection.
 - `seance_protocol/test/records_test.dart` — model JSON, record codec opacity,
-  LWW tie-breaking, DTO round-trips.
+  unknown-kind logging/refusal, LWW tie-breaking, DTO round-trips.
+- `seance_protocol/test/bookmark_test.dart` — every bookmark kind round-trips;
+  strict unions, kind fields, ids, dates, and immutable rules.
 - `seance_core/test/pure_logic_test.dart` — ssh_config import, TOFU verdicts,
   danger linter, paste sanitizer, secret redaction.
 - `seance_core/test/llm_test.dart` — Anthropic/OpenAI request build + response
@@ -34,8 +36,8 @@ no .rpm/Flatpak — the AppImage covers non-Debian distros; it uses the system G
   redaction of outbound context.
 - `seance_core/test/sync_test.dart` — engine: push, two-device convergence,
   concurrent-edit LWW, tombstones.
-- `seance_core/test/sync_coordinator_test.dart` — domain⇄record mapping converges
-  across two devices; edit propagation.
+- `seance_core/test/sync_coordinator_test.dart` — domain⇄record mapping,
+  unknown-kind preservation, fail-soft apply, and tombstone dispatch.
 - `seance_core/test/stores_probe_ssh_test.dart` — SecretVault, ConfigStore,
   ProbeService orchestration, `SshSessionManager.verifyHostKey` (TOFU), headless
   engine.
@@ -187,10 +189,8 @@ release).
 - **Poltergeist**, the sibling two-pane SFTP app, consumes `seance_protocol`
   and `seance_core` as pinned dependencies, with a short queue of small
   upstream asks (forward-compatible record kinds being the important one) —
-  see [docs/POLTERGEIST.md](POLTERGEIST.md). Three of the gaps it documents
+  see [docs/POLTERGEIST.md](POLTERGEIST.md). Two remaining gaps it documents
   are live Séance bugs tracked on their own, not just as Poltergeist asks:
-  - unknown record kinds decoding as `serverConfig`
-    ([#53](https://github.com/L-K-M/Seance/issues/53));
   - deletes never writing tombstones, so deleted servers resurrect on
     the next pull — and every pull is effectively full, since the app
     rebuilds its record store per round

@@ -1,14 +1,31 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
+
+import 'package:logging/logging.dart';
+
+const String _recordLoggerName = 'seance_protocol.records';
+
+final Logger _log = Logger(_recordLoggerName);
 
 /// The category of a synced record. The kind travels *inside* the encrypted
 /// payload, not in the envelope, so the server cannot even tell a server-config
 /// from a stored secret.
-enum RecordKind { serverConfig, hostKey, secret, snippet }
+enum RecordKind { serverConfig, hostKey, secret, snippet, bookmark, unknown }
 
-RecordKind recordKindFromName(String name) =>
-    RecordKind.values.firstWhere((k) => k.name == name,
-        orElse: () => RecordKind.serverConfig);
+RecordKind recordKindFromName(String name) => RecordKind.values.firstWhere(
+  (k) => k.name == name,
+  orElse: () {
+    final message =
+        'recordKindFromName: unknown kind "$name" '
+        '(legacy or newer-schema record)';
+
+    // Keep the library stream testable and surface it in Séance diagnostics.
+    _log.fine(message);
+    developer.log(message, name: _recordLoggerName, level: Level.FINE.value);
+    return RecordKind.unknown;
+  },
+);
 
 /// A record after decryption: application-level data the client works with.
 class DecryptedRecord {

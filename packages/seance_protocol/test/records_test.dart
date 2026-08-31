@@ -1,3 +1,4 @@
+import 'package:logging/logging.dart';
 import 'package:seance_protocol/seance_protocol.dart';
 import 'package:test/test.dart';
 
@@ -225,6 +226,23 @@ void main() {
   });
 
   group('RecordCodec', () {
+    test('unknown kind fallback emits a fine-level diagnostic', () async {
+      final previousLevel = Logger.root.level;
+      final records = <LogRecord>[];
+      Logger.root.level = Level.ALL;
+      final subscription = Logger.root.onRecord.listen(records.add);
+
+      try {
+        expect(recordKindFromName('flurb'), RecordKind.unknown);
+        expect(records, hasLength(1));
+        expect(records.single.level, Level.FINE);
+        expect(records.single.message, contains('flurb'));
+      } finally {
+        await subscription.cancel();
+        Logger.root.level = previousLevel;
+      }
+    });
+
     test('encrypts a server config and decrypts it back', () async {
       final vaultKey = secureRandomBytes(32);
       final codec = RecordCodec(vaultKey);
@@ -259,6 +277,60 @@ void main() {
       expect(enc.deleted, isTrue);
       final dec = await codec.decrypt(enc);
       expect(dec.deleted, isTrue);
+      expect(dec.kind, RecordKind.unknown);
+    });
+
+    test('serialized envelope does not expose the record kind', () async {
+      final codec = RecordCodec(secureRandomBytes(32));
+      final enc = await codec.encrypt(
+        DecryptedRecord(
+          id: 'bookmark:b1',
+          kind: RecordKind.bookmark,
+          updatedAt: 42,
+          deviceId: 'device-a',
+          data: const {'id': 'b1'},
+        ),
+      );
+
+      final wire = enc.toJson();
+      expect(wire.containsKey('kind'), isFalse);
+      expect(wire['id'], 'bookmark:b1');
+      expect(
+        wire.keys,
+        unorderedEquals(['id', 'updatedAt', 'deviceId', 'deleted', 'blob']),
+      );
+    });
+
+    test('unknown kinds decode as unknown and cannot be encrypted', () async {
+      final vaultKey = secureRandomBytes(32);
+      final codec = RecordCodec(vaultKey);
+      final blob = await VaultCrypto.sealJson(vaultKey, const {
+        'kind': 'flurb',
+        'data': {'value': 1},
+      });
+      final decoded = await codec.decrypt(
+        EncryptedRecord(
+          id: 'flurb:r1',
+          updatedAt: 42,
+          deviceId: 'device-a',
+          deleted: false,
+          seq: 1,
+          blob: blob,
+        ),
+      );
+
+      expect(decoded.kind, RecordKind.unknown);
+      expect(
+        () => codec.encrypt(
+          const DecryptedRecord(
+            id: 'r1',
+            kind: RecordKind.unknown,
+            updatedAt: 42,
+            deviceId: 'device-a',
+          ),
+        ),
+        throwsArgumentError,
+      );
     });
 
     test('a server holding the blob cannot read it without the vault key',
