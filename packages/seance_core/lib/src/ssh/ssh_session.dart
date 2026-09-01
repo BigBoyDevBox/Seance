@@ -10,6 +10,15 @@ import 'package:seance_protocol/seance_protocol.dart';
 import '../hostkey/tofu.dart';
 import '../terminal/terminal_engine.dart';
 import 'remote_file_system.dart';
+import 'sequential_cleanup.dart';
+
+const _cleanupActionTimeout = Duration(seconds: 5);
+
+Future<void> _discardCleanup(CleanupAction action) => runSequentialCleanup(
+      [action],
+      actionTimeout: _cleanupActionTimeout,
+      failureMode: CleanupFailureMode.ignore,
+    );
 
 /// Resolved credentials for one connection. The vault produces these just
 /// before connect; nothing here is persisted.
@@ -186,12 +195,12 @@ class SshSession {
       _sftpClient = sftp;
       return DartSshRemoteFileSystem(sftp);
     } on RemoteFileException {
-      opening?.close();
       _remoteFileSystem = null;
+      if (opening != null) await _discardCleanup(opening.close);
       rethrow;
     } catch (e) {
-      opening?.close();
       _remoteFileSystem = null;
+      if (opening != null) await _discardCleanup(opening.close);
       throw RemoteFileException(
         kind: RemoteFileErrorKind.unsupported,
         operation: 'open SFTP',
@@ -241,13 +250,22 @@ class SshSession {
   Future<void> _finish() async {
     if (_closed) return;
     _closed = true;
-    for (final s in _subs) {
-      await s.cancel();
-    }
-    _sftpClient?.close();
-    shell.close();
-    client.close();
-    await engine.dispose();
+    final subscriptions = List<StreamSubscription<dynamic>>.of(_subs);
+    final sftpClient = _sftpClient;
+    _subs.clear();
+    _sftpClient = null;
+    _remoteFileSystem = null;
+
+    await runSequentialCleanup(
+      [
+        for (final subscription in subscriptions) subscription.cancel,
+        if (sftpClient != null) sftpClient.close,
+        shell.close,
+        client.close,
+        engine.dispose,
+      ],
+      actionTimeout: _cleanupActionTimeout,
+    );
   }
 
   bool get isClosed => _closed || client.isClosed;
@@ -444,7 +462,7 @@ class SshSessionManager {
       final summary = _summarizeFailure(e, config, target, credentials, log);
       note('');
       note(summary);
-      client.close();
+      await _discardCleanup(client.close);
       throw SshConnectException(summary, e, log ?? SshConnectionLog());
     }
   }
