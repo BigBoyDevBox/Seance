@@ -6,25 +6,44 @@ import 'package:test/test.dart';
 void main() {
   const actionTimeout = Duration(milliseconds: 10);
 
+  test('single-flight cleanup shares its result', () async {
+    final cleanup = SingleFlightCleanup();
+    final release = Completer<void>();
+    var calls = 0;
+
+    final first = cleanup.run(() {
+      calls++;
+      return release.future;
+    });
+    final second = cleanup.run(() {
+      calls++;
+    });
+
+    expect(second, same(first));
+    expect(calls, 1);
+
+    release.complete();
+    await first;
+    expect(cleanup.run(() => calls++), same(first));
+    expect(calls, 1);
+  });
+
   test('cleanup attempts every action and preserves the first error', () async {
     final firstError = StateError('first');
     final actionsRun = <String>[];
 
     await expectLater(
-      runSequentialCleanup(
-        [
-          () {
-            actionsRun.add('first');
-            throw firstError;
-          },
-          () => actionsRun.add('second'),
-          () {
-            actionsRun.add('third');
-            throw StateError('third');
-          },
-        ],
-        actionTimeout: actionTimeout,
-      ),
+      runSequentialCleanup([
+        () {
+          actionsRun.add('first');
+          throw firstError;
+        },
+        () => actionsRun.add('second'),
+        () {
+          actionsRun.add('third');
+          throw StateError('third');
+        },
+      ], actionTimeout: actionTimeout),
       throwsA(same(firstError)),
     );
 
@@ -35,10 +54,7 @@ void main() {
     var laterActionRan = false;
 
     await runSequentialCleanup(
-      [
-        () => Completer<void>().future,
-        () => laterActionRan = true,
-      ],
+      [() => Completer<void>().future, () => laterActionRan = true],
       actionTimeout: actionTimeout,
       failureMode: CleanupFailureMode.ignore,
     );

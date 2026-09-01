@@ -119,6 +119,7 @@ class SshSession {
   final List<StreamSubscription<dynamic>> _subs = [];
   final Completer<void> _stdoutDone = Completer<void>();
   final Completer<void> _stderrDone = Completer<void>();
+  final SingleFlightCleanup _cleanup = SingleFlightCleanup();
   bool _closed = false;
   SftpClient? _sftpClient;
   Future<RemoteFileSystem>? _remoteFileSystem;
@@ -229,8 +230,11 @@ class SshSession {
       // A dropped transport may never deliver stream-done; teardown must still
       // complete and mark the session disconnected.
     }
-    await _finish();
-    _notifyClosed();
+    try {
+      await _finish();
+    } finally {
+      _notifyClosed();
+    }
   }
 
   static void _complete(Completer<void> completer) {
@@ -247,8 +251,9 @@ class SshSession {
 
   Future<void> close() => _finish();
 
-  Future<void> _finish() async {
-    if (_closed) return;
+  Future<void> _finish() => _cleanup.run(_finishOnce);
+
+  Future<void> _finishOnce() async {
     _closed = true;
     final subscriptions = List<StreamSubscription<dynamic>>.of(_subs);
     final sftpClient = _sftpClient;

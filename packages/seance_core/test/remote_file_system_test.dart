@@ -282,11 +282,8 @@ class _FakeSftpClient implements SftpClient {
 }
 
 class _FakeSftpFile extends SftpFile {
-  _FakeSftpFile(
-    SftpClient client,
-    this.attrs,
-    this.source,
-  ) : super(client, Uint8List(0));
+  _FakeSftpFile(SftpClient client, this.attrs, this.source)
+    : super(client, Uint8List(0));
 
   final SftpFileAttrs attrs;
   final Stream<Uint8List> source;

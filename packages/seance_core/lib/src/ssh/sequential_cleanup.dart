@@ -4,6 +4,13 @@ typedef CleanupAction = FutureOr<void> Function();
 
 enum CleanupFailureMode { preserveFirst, ignore }
 
+final class SingleFlightCleanup {
+  Future<void>? _result;
+
+  Future<void> run(CleanupAction action) =>
+      _result ??= Future<void>.sync(action);
+}
+
 /// Runs teardown in dependency order and still attempts later resources.
 Future<void> runSequentialCleanup(
   Iterable<CleanupAction> actions, {
