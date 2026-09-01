@@ -736,7 +736,8 @@ Stream<T> _cancelWhenRequested<T>(
       yield iterator.current;
     }
   } finally {
-    unawaited(iterator.cancel());
+    // Cancellation cleanup must not escape after the transfer has completed.
+    unawaited(iterator.cancel().catchError((_) {}));
   }
 }
 
