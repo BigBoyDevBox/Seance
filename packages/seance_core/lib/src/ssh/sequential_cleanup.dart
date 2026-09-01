@@ -13,9 +13,13 @@ final class SingleFlightCleanup {
 
     final completer = Completer<void>();
     _result = completer.future;
-    Future<void>.sync(
-      action,
-    ).then(completer.complete, onError: completer.completeError);
+    Future<void>.sync(action).then(
+      completer.complete,
+      onError: (Object error, StackTrace stackTrace) {
+        _result = Future<void>.value();
+        completer.completeError(error, stackTrace);
+      },
+    );
     return completer.future;
   }
 }

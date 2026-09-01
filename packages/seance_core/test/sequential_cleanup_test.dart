@@ -43,6 +43,17 @@ void main() {
     expect(calls, 1);
   });
 
+  test('single-flight cleanup delivers a failure once', () async {
+    final cleanup = SingleFlightCleanup();
+    final failure = StateError('cleanup failed');
+    var laterActionRan = false;
+
+    await expectLater(cleanup.run(() => throw failure), throwsA(same(failure)));
+    await cleanup.run(() => laterActionRan = true);
+
+    expect(laterActionRan, isFalse);
+  });
+
   test('cleanup attempts every action and preserves the first error', () async {
     final firstError = StateError('first');
     final actionsRun = <String>[];
