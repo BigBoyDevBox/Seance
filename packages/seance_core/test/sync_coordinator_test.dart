@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 class FakeServer implements SyncApi {
   final Map<String, EncryptedRecord> _store = {};
   int _seq = 0;
+  int pushedRecords = 0;
 
   @override
   Future<PullResponse> pull({required int since}) async {
@@ -15,6 +16,7 @@ class FakeServer implements SyncApi {
 
   @override
   Future<PushResponse> push(List<EncryptedRecord> records) async {
+    pushedRecords += records.length;
     final results = <PushResult>[];
     for (final incoming in records) {
       final existing = _store[incoming.id];
@@ -219,5 +221,228 @@ void main() {
     expect(onB.single.title, 'Tail log');
     expect(onB.single.body, 'tail -f {{file}}');
     expect(onB.single.placeholders, ['file']);
+  });
+
+  test('bookmark records never create phantom server configs', () async {
+    final server0 = FakeServer();
+    final vaultKey = secureRandomBytes(32);
+    final codec = RecordCodec(vaultKey);
+    final blob = await VaultCrypto.sealJson(vaultKey, const {
+      'kind': 'bookmark',
+      'data': {
+        'id': 'bookmark-1',
+        'label': 'A bookmark, not a server',
+        'host': 'nas.example.com',
+        'username': 'alice',
+        'createdAt': 1,
+        'updatedAt': 2,
+      },
+    });
+    await server0.push([
+      EncryptedRecord(
+        id: 'bookmark:bookmark-1',
+        updatedAt: 2,
+        deviceId: 'poltergeist',
+        deleted: false,
+        seq: null,
+        blob: blob,
+      ),
+    ]);
+    final configStore = InMemoryConfigStore();
+    final coordinator = SyncCoordinator(
+      configStore: configStore,
+      hostKeyStore: InMemoryHostKeyStore(),
+      codec: codec,
+      local: InMemoryLocalRecordStore(),
+      deviceId: 'seance',
+    );
+
+    final outcome = await coordinator.run(server0);
+
+    expect(outcome.pulled, 1);
+    expect(await configStore.listServers(), isEmpty);
+  });
+
+  test('unknown records remain byte-identical and are not refetched', () async {
+    final server0 = FakeServer();
+    final vaultKey = secureRandomBytes(32);
+    final codec = RecordCodec(vaultKey);
+    final blob = await VaultCrypto.sealJson(vaultKey, const {
+      'kind': 'flurb',
+      'data': {'future': true},
+    });
+    await server0.push([
+      EncryptedRecord(
+        id: 'flurb:future-1',
+        updatedAt: 100,
+        deviceId: 'future-device',
+        deleted: false,
+        seq: null,
+        blob: blob,
+      ),
+    ]);
+    final before = (await server0.pull(since: 0)).records.single;
+    final local = InMemoryLocalRecordStore();
+    final coordinator = SyncCoordinator(
+      configStore: InMemoryConfigStore(),
+      hostKeyStore: InMemoryHostKeyStore(),
+      codec: codec,
+      local: local,
+      deviceId: 'seance',
+    );
+    final pushesBeforeSync = server0.pushedRecords;
+
+    final first = await coordinator.run(server0);
+    final second = await coordinator.run(server0);
+    final after = (await server0.pull(since: 0)).records.single;
+
+    expect(first.pulled, 1);
+    expect(second.pulled, 0);
+    expect(await local.highWaterSeq(), before.seq);
+    expect(server0.pushedRecords, pushesBeforeSync);
+    expect(after.id, before.id);
+    expect(after.updatedAt, before.updatedAt);
+    expect(after.deviceId, before.deviceId);
+    expect(after.seq, before.seq);
+    expect(after.blob, orderedEquals(before.blob));
+  });
+
+  test('persistent records are re-applied without another pull', () async {
+    final server0 = FakeServer();
+    final codec = RecordCodec(secureRandomBytes(32));
+    final local = InMemoryLocalRecordStore();
+    await local.putRemote(
+      (await codec.encrypt(
+        DecryptedRecord(
+          id: 'learned-kind',
+          kind: RecordKind.serverConfig,
+          updatedAt: 2,
+          deviceId: 'remote',
+          data: server('learned-kind', 'learned', 2).toJson(),
+        ),
+      ))
+          .withSeq(7),
+    );
+    await local.setHighWaterSeq(7);
+    final configStore = InMemoryConfigStore();
+    final coordinator = SyncCoordinator(
+      configStore: configStore,
+      hostKeyStore: InMemoryHostKeyStore(),
+      codec: codec,
+      local: local,
+      deviceId: 'seance',
+    );
+
+    final outcome = await coordinator.run(server0);
+
+    expect(outcome.pulled, 0);
+    expect((await configStore.getServer('learned-kind'))!.label, 'learned');
+  });
+
+  test('a malformed known record does not block later records', () async {
+    final codec = RecordCodec(secureRandomBytes(32));
+    final local = InMemoryLocalRecordStore();
+    await local.putRemote(
+      await codec.encrypt(
+        const DecryptedRecord(
+          id: 'bad',
+          kind: RecordKind.serverConfig,
+          updatedAt: 1,
+          deviceId: 'remote',
+          data: {'id': 'bad', 'label': 'missing host and username'},
+        ),
+      ),
+    );
+    await local.putRemote(
+      await codec.encrypt(
+        DecryptedRecord(
+          id: 'good',
+          kind: RecordKind.serverConfig,
+          updatedAt: 2,
+          deviceId: 'remote',
+          data: server('good', 'healthy', 2).toJson(),
+        ),
+      ),
+    );
+    final configStore = InMemoryConfigStore();
+    final coordinator = SyncCoordinator(
+      configStore: configStore,
+      hostKeyStore: InMemoryHostKeyStore(),
+      codec: codec,
+      local: local,
+      deviceId: 'seance',
+    );
+
+    await coordinator.applyToStores();
+
+    expect((await configStore.getServer('good'))!.label, 'healthy');
+    expect(await configStore.getServer('bad'), isNull);
+  });
+
+  test(
+    'prefixless server tombstones still delete after the placeholder flip',
+    () async {
+      final codec = RecordCodec(secureRandomBytes(32));
+      final local = InMemoryLocalRecordStore();
+      final configStore = InMemoryConfigStore();
+      await configStore.putServer(server('server-1', 'deleted', 1));
+      await local.putRemote(
+        await codec.encrypt(
+          const DecryptedRecord(
+            id: 'server-1',
+            kind: RecordKind.serverConfig,
+            updatedAt: 2,
+            deviceId: 'remote',
+            deleted: true,
+          ),
+        ),
+      );
+      final coordinator = SyncCoordinator(
+        configStore: configStore,
+        hostKeyStore: InMemoryHostKeyStore(),
+        codec: codec,
+        local: local,
+        deviceId: 'seance',
+      );
+
+      await coordinator.applyToStores();
+
+      expect(await configStore.getServer('server-1'), isNull);
+    },
+  );
+
+  test('prefixed tombstones are consumed before kind dispatch', () async {
+    final codec = RecordCodec(secureRandomBytes(32));
+    final local = InMemoryLocalRecordStore();
+    final hostKeys = InMemoryHostKeyStore();
+    final key = HostKey(
+      host: 'nas.example.com',
+      type: 'ssh-ed25519',
+      fingerprintSha256: 'SHA256:aaa',
+      pinnedAt: 1,
+    );
+    await hostKeys.put(key);
+    await local.putRemote(
+      await codec.encrypt(
+        const DecryptedRecord(
+          id: 'hostkey:nas.example.com:22',
+          kind: RecordKind.hostKey,
+          updatedAt: 2,
+          deviceId: 'remote',
+          deleted: true,
+        ),
+      ),
+    );
+    final coordinator = SyncCoordinator(
+      configStore: InMemoryConfigStore(),
+      hostKeyStore: hostKeys,
+      codec: codec,
+      local: local,
+      deviceId: 'seance',
+    );
+
+    await coordinator.applyToStores();
+
+    expect(await hostKeys.get('nas.example.com', 22), same(key));
   });
 }
