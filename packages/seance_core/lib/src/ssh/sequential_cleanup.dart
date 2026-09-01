@@ -7,8 +7,17 @@ enum CleanupFailureMode { preserveFirst, ignore }
 final class SingleFlightCleanup {
   Future<void>? _result;
 
-  Future<void> run(CleanupAction action) =>
-      _result ??= Future<void>.sync(action);
+  Future<void> run(CleanupAction action) {
+    final running = _result;
+    if (running != null) return running;
+
+    final completer = Completer<void>();
+    _result = completer.future;
+    Future<void>.sync(
+      action,
+    ).then(completer.complete, onError: completer.completeError);
+    return completer.future;
+  }
 }
 
 /// Runs teardown in dependency order and still attempts later resources.

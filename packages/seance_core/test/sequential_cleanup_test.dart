@@ -28,6 +28,21 @@ void main() {
     expect(calls, 1);
   });
 
+  test('single-flight cleanup contains synchronous reentry', () async {
+    final cleanup = SingleFlightCleanup();
+    late Future<void> nested;
+    var calls = 0;
+
+    final first = cleanup.run(() {
+      calls++;
+      nested = cleanup.run(() => calls++);
+    });
+
+    expect(nested, same(first));
+    await first;
+    expect(calls, 1);
+  });
+
   test('cleanup attempts every action and preserves the first error', () async {
     final firstError = StateError('first');
     final actionsRun = <String>[];
