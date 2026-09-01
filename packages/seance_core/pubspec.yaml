@@ -14,7 +14,8 @@ environment:
 dependencies:
   seance_protocol:
     path: ../seance_protocol
-  dartssh2: ^2.9.0
+  # Pin the pipelined-read cancellation behavior covered by tests.
+  dartssh2: 3.0.2
   http: ^1.2.0
   crypto: ^3.0.0
   meta: ^1.15.0
