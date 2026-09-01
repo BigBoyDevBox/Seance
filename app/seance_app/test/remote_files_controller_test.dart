@@ -490,6 +490,7 @@ class _FakeRemoteFileSystem implements RemoteFileSystem {
     StreamSink<List<int>> destination, {
     RemoteTransferProgress? onProgress,
     RemoteTransferCancellation? cancellation,
+    bool computeHash = true,
   }) async {
     cancellation?.throwIfCancelled();
     destination.add([1, 2, 3]);
@@ -536,6 +537,7 @@ class _FakeRemoteFileSystem implements RemoteFileSystem {
     RemoteFileEntry? expectedTarget,
     RemoteTransferProgress? onProgress,
     RemoteTransferCancellation? cancellation,
+    bool computeHash = true,
   }) async {
     expectedUploadTarget = expectedTarget;
     final bytes = <int>[];
