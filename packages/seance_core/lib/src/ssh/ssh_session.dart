@@ -232,6 +232,8 @@ class SshSession {
     }
     try {
       await _finish();
+    } catch (_) {
+      // A remote drop has no caller to receive teardown failures.
     } finally {
       _notifyClosed();
     }
